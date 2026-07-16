@@ -3,3 +3,5 @@ node_modules/
 npm-cache/
 .vscode/
 .idea/
+pnpm-lock.yaml
+pnpm-workspace.yaml
