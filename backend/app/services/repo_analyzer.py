@@ -3,12 +3,21 @@ import os
 import shutil
 import tempfile
 from datetime import datetime, timezone
-from typing import Set
 
 from git import Repo
 from tree_sitter import Language, Parser, Node
 
-from app.core.config import EMBEDDING_DIMENSION
+from app.core.config import (
+    EMBEDDING_DIMENSION,
+    OPENAI_EMBEDDING_MODEL,
+    ANALYSIS_MAX_FILE_SIZE,
+    ANALYSIS_EMBED_BATCH_SIZE,
+    ANALYSIS_CLONE_DEPTH,
+    ANALYSIS_EXCLUDE_DIRS,
+    ANALYSIS_SKIP_EXTENSIONS,
+    ANALYSIS_SOURCE_EXTENSIONS,
+    EXTENSION_LANGUAGE_MAP,
+)
 from app.core.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -25,32 +34,6 @@ try:
 except ImportError:
     JS_LANG = None
 
-VENDOR_PATTERNS: Set[str] = {
-    ".git", "node_modules", "venv", ".venv", "__pycache__",
-    "dist", "build", ".next", ".turbo", "target", "vendor",
-    ".idea", ".vscode", ".DS_Store",
-}
-
-SKIP_EXTENSIONS: Set[str] = {
-    ".min.js", ".bundle.js", ".map", ".lock", ".pyc", ".pyo",
-    ".bin", ".exe", ".dll", ".so", ".dylib", ".class",
-    ".jar", ".war", ".zip", ".tar", ".gz", ".bz2", ".7z",
-    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp",
-    ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv",
-    ".ttf", ".woff", ".woff2", ".eot", ".otf",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-}
-
-SOURCE_EXTENSIONS: Set[str] = {".py", ".js", ".ts", ".tsx", ".jsx"}
-
-EXT_LANGUAGE_MAP = {
-    ".py": "python",
-    ".js": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescriptreact",
-    ".jsx": "javascriptreact",
-}
-
 
 class RepoAnalyzer:
     def __init__(self, repository_id: str, github_url: str):
@@ -59,13 +42,13 @@ class RepoAnalyzer:
         self.supabase = get_supabase()
         self._temp_dir = None
 
-    def analyze(self, max_file_size: int = 1_000_000, embed_batch_size: int = 20) -> dict:
+    def analyze(self) -> dict:
         self._set_status("processing", started_at=datetime.now(timezone.utc).isoformat())
 
         try:
             clone_path = self._clone()
             files = self._walk(clone_path)
-            stored_count = self._store_files(files, max_file_size, embed_batch_size)
+            stored_count = self._store_files(files)
             symbol_count = self._parse_and_store_symbols(files)
             self._build_edges_from_imports(files)
             self._update_repo_metadata()
@@ -91,13 +74,13 @@ class RepoAnalyzer:
     def _clone(self) -> str:
         self._temp_dir = tempfile.mkdtemp(prefix="repo_")
         logger.info(f"Cloning {self.github_url} into {self._temp_dir}")
-        Repo.clone_from(self.github_url, self._temp_dir, depth=1)
+        Repo.clone_from(self.github_url, self._temp_dir, depth=ANALYSIS_CLONE_DEPTH)
         return self._temp_dir
 
     def _walk(self, root: str) -> list[dict]:
         results = []
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in VENDOR_PATTERNS]
+            dirnames[:] = [d for d in dirnames if d not in ANALYSIS_EXCLUDE_DIRS]
 
             for filename in filenames:
                 full_path = os.path.join(dirpath, filename)
@@ -112,8 +95,8 @@ class RepoAnalyzer:
                     continue
 
                 ext = os.path.splitext(filename)[1].lower()
-                language = EXT_LANGUAGE_MAP.get(ext)
-                is_source = ext in SOURCE_EXTENSIONS
+                language = EXTENSION_LANGUAGE_MAP.get(ext)
+                is_source = ext in ANALYSIS_SOURCE_EXTENSIONS
 
                 results.append({
                     "file_path": rel_path,
@@ -127,12 +110,46 @@ class RepoAnalyzer:
         return results
 
     def _is_vendored(self, filename: str, rel_path: str) -> bool:
-        if filename.endswith(tuple(SKIP_EXTENSIONS)):
+        if filename.endswith(tuple(ANALYSIS_SKIP_EXTENSIONS)):
             return True
         for part in rel_path.split(os.sep):
-            if part in VENDOR_PATTERNS:
+            if part in ANALYSIS_EXCLUDE_DIRS:
                 return True
         return False
+
+    def _store_files(self, files: list[dict]) -> int:
+        stored_count = 0
+        embed_batch = []
+
+        for f in files:
+            if not f["is_source"] or f["size"] > ANALYSIS_MAX_FILE_SIZE or f["size"] == 0:
+                self._insert_file_record(f, content=None, embedding=None)
+                stored_count += 1
+                continue
+
+            try:
+                with open(f["full_path"], "rb") as fh:
+                    raw = fh.read()
+                content = raw.decode("utf-8", errors="replace")
+            except Exception:
+                self._insert_file_record(f, content=None, embedding=None)
+                stored_count += 1
+                continue
+
+            record = self._insert_file_record(f, content=content, embedding=None)
+            stored_count += 1
+
+            if content.strip():
+                embed_batch.append({"id": record["id"], "content": content[:8000]})
+
+            if len(embed_batch) >= ANALYSIS_EMBED_BATCH_SIZE:
+                self._generate_and_store_embeddings(embed_batch)
+                embed_batch.clear()
+
+        if embed_batch:
+            self._generate_and_store_embeddings(embed_batch)
+
+        return stored_count
 
     def _parse_file(self, file_path: str, language: str) -> list[dict]:
         lang = self._get_lang(language)
@@ -417,7 +434,7 @@ class RepoAnalyzer:
             texts = [item["content"] for item in batch]
             client = OpenAI()
             response = client.embeddings.create(
-                model="text-embedding-3-small",
+                model=OPENAI_EMBEDDING_MODEL,
                 input=texts,
                 dimensions=EMBEDDING_DIMENSION,
             )
