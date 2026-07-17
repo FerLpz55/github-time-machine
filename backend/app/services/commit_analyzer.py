@@ -83,7 +83,7 @@ class CommitAnalyzer:
                     chunk = commits_to_insert[i:i + chunk_size]
                     supabase.table("commits").upsert(
                         chunk,
-                        on_conflict="repository_id, commit_sha"
+                        on_conflict="commit_sha"
                     ).execute()
             else:
                 logger.info(f"No commits found to insert for repo_id {repo_id}")

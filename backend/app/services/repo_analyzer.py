@@ -52,13 +52,10 @@ class RepoAnalyzer:
             clone_path = self._clone()
             files = self._walk(clone_path)
             stored_count = self._store_files(files)
-            file_id_map = self._build_file_id_map(files)
             CommitAnalyzer().extract_and_store(self.repository_id, clone_path)
-            symbol_count = self._parse_and_store_symbols(files, file_id_map)
-            self._build_edges_from_imports(files, file_id_map)
             self._update_repo_metadata()
 
-            summary_text = f"{stored_count} files, {sum(len(v) for v in symbol_count.values())} symbols indexed"
+            summary_text = f"{stored_count} files indexed"
             self._set_status(
                 "completed",
                 completed_at=datetime.now(timezone.utc).isoformat(),
@@ -66,7 +63,6 @@ class RepoAnalyzer:
             )
             return {
                 "files_indexed": stored_count,
-                "symbols_indexed": sum(len(v) for v in symbol_count.values()),
             }
 
         except Exception as e:
@@ -399,9 +395,7 @@ class RepoAnalyzer:
         if embedding is not None:
             payload["embedding"] = embedding
 
-        response = self.supabase.table("files").upsert(
-            payload, on_conflict="repository_id, file_path"
-        ).execute()
+        response = self.supabase.table("files").insert(payload).execute()
         return response.data[0]
 
     def _generate_and_store_embeddings(self, batch: list[dict]) -> None:
