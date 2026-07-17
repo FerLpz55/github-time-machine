@@ -16,7 +16,7 @@ class User(BaseModel):
 
 class Repository(BaseModel):
     id: UUID
-    user_id: Optional[UUID] = None
+    user_id: UUID
     name: str
     owner: str
     github_url: str

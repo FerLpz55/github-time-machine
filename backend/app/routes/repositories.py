@@ -37,6 +37,20 @@ _IMPORT_JS = re.compile(r"""(?:import\s+.*?\s+from\s+['"]([^'"]+)['"]|require\s*
 router = APIRouter(prefix="/repositories", tags=["repositories"])
 
 
+def _get_demo_user_id() -> str:
+    supabase = get_supabase()
+    existing = supabase.table("users").select("id").eq("github_id", 0).limit(1).execute()
+    if existing.data:
+        return existing.data[0]["id"]
+    response = supabase.table("users").insert({
+        "github_id": 0,
+        "username": "demo",
+    }).execute()
+    if not response.data:
+        raise HTTPException(status_code=500, detail="Failed to create demo user")
+    return response.data[0]["id"]
+
+
 def _run_analysis(repository_id: str, github_url: str) -> None:
     try:
         analyzer = RepoAnalyzer(repository_id, github_url)
@@ -53,9 +67,11 @@ async def submit_repository(body: RepositorySubmitRequest, background_tasks: Bac
     if not RepoAnalyzer._validate_url(injected_url=body.github_url):
         raise HTTPException(status_code=400, detail="Invalid GitHub URL. Must be https://github.com/<owner>/<repo>")
 
+    user_id = _get_demo_user_id()
+
     repo_response = (
         supabase.table("repositories")
-        .insert({"github_url": body.github_url})
+        .insert({"github_url": body.github_url, "user_id": user_id})
         .execute()
     )
     if not repo_response.data:
