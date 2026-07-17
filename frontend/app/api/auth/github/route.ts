@@ -2,17 +2,15 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
+  const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-
   const clientId = process.env.GITHUB_CLIENT_ID;
   const clientSecret = process.env.GITHUB_CLIENT_SECRET;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  const redirectUri = process.env.NEXT_PUBLIC_GITHUB_REDIRECT_URI || `${siteUrl}/api/auth/github`;
+  const redirectUri = `${origin}/api/auth/github`;
 
   if (code) {
     if (!clientId || !clientSecret) {
-      return NextResponse.redirect(new URL("/repo/275bed80-a451-481c-886c-457f436c0050", siteUrl));
+      return NextResponse.redirect(new URL("/repo/275bed80-a451-481c-886c-457f436c0050", origin));
     }
     try {
       const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
@@ -22,14 +20,14 @@ export async function GET(request: Request) {
       });
       const tokenData = await tokenResponse.json();
       if (tokenData.error) throw new Error(tokenData.error_description || tokenData.error);
-      return NextResponse.redirect(new URL("/repo/275bed80-a451-481c-886c-457f436c0050", siteUrl));
+      return NextResponse.redirect(new URL("/repo/275bed80-a451-481c-886c-457f436c0050", origin));
     } catch (e: any) {
-      return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(e.message || "auth_failed")}`, siteUrl));
+      return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(e.message || "auth_failed")}`, origin));
     }
   }
 
   if (!clientId) {
-    return NextResponse.redirect(new URL("/login?error=github_not_configured", siteUrl));
+    return NextResponse.redirect(new URL("/login?error=github_not_configured", origin));
   }
 
   const state = crypto.randomBytes(16).toString("hex");
