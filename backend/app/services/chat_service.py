@@ -101,16 +101,44 @@ class ChatService:
             r = repo.data[0]
             parts.append(f"Repository: {r.get('owner')}/{r.get('name')} ({r.get('language', 'unknown')})")
 
+        readme = (
+            self.supabase.table("files")
+            .select("content")
+            .eq("repository_id", self.repository_id)
+            .ilike("file_path", "%readme%")
+            .limit(1)
+            .execute()
+        )
+        if readme.data and readme.data[0].get("content"):
+            content = readme.data[0]["content"][:3000]
+            parts.append(f"\nREADME (excerpt):\n{content}")
+
+        source_files = (
+            self.supabase.table("files")
+            .select("file_path, content")
+            .eq("repository_id", self.repository_id)
+            .in_("language", ["python", "javascript", "typescript", "typescriptreact", "javascriptreact"])
+            .limit(15)
+            .execute()
+        )
+        if source_files.data:
+            lines = ["\nSource files (sample):"]
+            for f in source_files.data:
+                path = f["file_path"]
+                content = (f.get("content") or "")[:500]
+                lines.append(f"\n--- {path} ---\n{content}")
+            parts.append("\n".join(lines))
+
         files = (
             self.supabase.table("files")
             .select("file_path, language, size")
             .eq("repository_id", self.repository_id)
             .order("size", desc=True)
-            .limit(30)
+            .limit(25)
             .execute()
         )
         if files.data:
-            lines = ["Key files:"]
+            lines = ["\nAll files (top 25 by size):"]
             for f in files.data:
                 lines.append(f"  {f['file_path']} ({f.get('language','?')}, {f.get('size',0)} bytes)")
             parts.append("\n".join(lines))
@@ -124,7 +152,7 @@ class ChatService:
             .execute()
         )
         if commits.data:
-            lines = ["Recent commits:"]
+            lines = ["\nRecent commits:"]
             for c in commits.data:
                 msg = (c.get("message") or "")[:100]
                 author = c.get("author") or "unknown"
