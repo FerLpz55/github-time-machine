@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import CORS_ORIGINS
+from app.core.rate_limit import rate_limit_middleware
 from app.routes.health import router as health_router
 from app.routes.repositories import router as repositories_router
 from app.routes.repos import router as repos_router
@@ -15,6 +16,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.middleware("http")(rate_limit_middleware())
 
 app.include_router(health_router)
 app.include_router(repositories_router)
