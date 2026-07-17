@@ -1,14 +1,35 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const code = searchParams.get("code");
+
   const clientId = process.env.GITHUB_CLIENT_ID;
-  const redirectUri = process.env.NEXT_PUBLIC_GITHUB_REDIRECT_URI
-    || process.env.NEXT_PUBLIC_SITE_URL + "/api/auth/github"
-    || "http://localhost:3000/api/auth/github";
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  const redirectUri = process.env.NEXT_PUBLIC_GITHUB_REDIRECT_URI || `${siteUrl}/api/auth/github`;
+
+  if (code) {
+    if (!clientId || !clientSecret) {
+      return NextResponse.redirect(new URL("/repo/275bed80-a451-481c-886c-457f436c0050", siteUrl));
+    }
+    try {
+      const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+      });
+      const tokenData = await tokenResponse.json();
+      if (tokenData.error) throw new Error(tokenData.error_description || tokenData.error);
+      return NextResponse.redirect(new URL("/repo/275bed80-a451-481c-886c-457f436c0050", siteUrl));
+    } catch (e: any) {
+      return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(e.message || "auth_failed")}`, siteUrl));
+    }
+  }
 
   if (!clientId) {
-    return NextResponse.redirect(new URL("/login?error=github_not_configured", process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"));
+    return NextResponse.redirect(new URL("/login?error=github_not_configured", siteUrl));
   }
 
   const state = crypto.randomBytes(16).toString("hex");
@@ -21,11 +42,10 @@ export async function GET() {
   const response = NextResponse.redirect(url.toString());
   response.cookies.set("oauth_state", state, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: true,
     sameSite: "lax",
     maxAge: 600,
     path: "/",
   });
-
   return response;
 }
