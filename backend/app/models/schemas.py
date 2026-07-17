@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from typing import Optional, Union
 from uuid import UUID, uuid4
 
@@ -6,10 +7,22 @@ from pydantic import BaseModel, Field
 
 from app.models.tables import Analysis
 
+GITHUB_URL_PATTERN = r"^https://github\.com/[^/]+/[^/]+"
+
+
+class RepositoryStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    ERROR = "error"
+
 
 class RepositorySubmitRequest(BaseModel):
     github_url: str = Field(
         ...,
+        min_length=19,
+        max_length=256,
+        pattern=GITHUB_URL_PATTERN,
         description="GitHub repository URL to analyze",
         examples=["https://github.com/facebook/react"],
     )
@@ -17,7 +30,7 @@ class RepositorySubmitRequest(BaseModel):
 
 class RepositoryPending(BaseModel):
     id: UUID = Field(default_factory=uuid4)
-    status: str = "pending"
+    status: RepositoryStatus = RepositoryStatus.PENDING
     github_url: str
     message: str = "Repository queued for analysis"
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -25,7 +38,7 @@ class RepositoryPending(BaseModel):
 
 class RepositoryProcessing(BaseModel):
     id: UUID
-    status: str = "processing"
+    status: RepositoryStatus = RepositoryStatus.PROCESSING
     github_url: str
     started_at: Optional[datetime] = None
     created_at: datetime
@@ -33,13 +46,13 @@ class RepositoryProcessing(BaseModel):
 
 class RepositoryCompleted(BaseModel):
     id: UUID
-    status: str = "completed"
+    status: RepositoryStatus = RepositoryStatus.COMPLETED
     github_url: str
     name: str
     owner: str
     language: Optional[str] = None
-    files_indexed: int = 0
-    commits_analyzed: int = 0
+    files_indexed: int = Field(ge=0)
+    commits_analyzed: int = Field(ge=0)
     analysis: Optional[Analysis] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
@@ -47,7 +60,7 @@ class RepositoryCompleted(BaseModel):
 
 class RepositoryError(BaseModel):
     id: UUID
-    status: str = "error"
+    status: RepositoryStatus = RepositoryStatus.ERROR
     github_url: str
     error_message: str
     created_at: datetime
@@ -63,7 +76,7 @@ RepositoryResponse = Union[
 
 class ChatRequest(BaseModel):
     repository_id: UUID
-    question: str
+    question: str = Field(min_length=1, max_length=2000)
 
 
 class ChatResponse(BaseModel):
@@ -90,7 +103,7 @@ class RepositoryListResponse(BaseModel):
 
 
 class TimelineEvent(BaseModel):
-    sha: str
+    sha: str = Field(min_length=40, max_length=40)
     date: Optional[datetime] = None
     author: Optional[str] = None
     message: Optional[str] = None
@@ -99,22 +112,22 @@ class TimelineEvent(BaseModel):
 
 
 class TimelineStats(BaseModel):
-    total_commits: int = 0
+    total_commits: int = Field(ge=0)
     date_range: Optional[dict] = None
-    top_authors: list[str] = []
+    top_authors: list[str] = Field(default_factory=list)
 
 
 class TimelineResponse(BaseModel):
-    events: list[TimelineEvent] = []
+    events: list[TimelineEvent] = Field(default_factory=list)
     stats: Optional[TimelineStats] = None
 
 
 class GraphNode(BaseModel):
-    id: str
+    id: str = Field(min_length=1)
     label: str
     type: str = "file"
     language: Optional[str] = None
-    size: Optional[int] = None
+    size: Optional[int] = Field(None, ge=0)
 
 
 class GraphEdge(BaseModel):
@@ -125,5 +138,5 @@ class GraphEdge(BaseModel):
 
 
 class GraphResponse(BaseModel):
-    nodes: list[GraphNode] = []
-    edges: list[GraphEdge] = []
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)

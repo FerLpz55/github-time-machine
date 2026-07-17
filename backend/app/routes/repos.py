@@ -1,10 +1,10 @@
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 import httpx
-from app.core.supabase import get_supabase
+from app.dependencies import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +13,11 @@ router = APIRouter(prefix="/repos", tags=["repos"])
 class ConnectRequest(BaseModel):
     github_access_token: str = Field(..., description="The user's GitHub access token")
 
-@router.post("/connect")
+@router.post("/connect", summary="Connect GitHub account", tags=["auth"])
 async def connect_repository(
     body: ConnectRequest,
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
+    supabase = Depends(get_db),
 ):
     """
     Validates the Supabase Auth session token, retrieves details from the GitHub user API,
@@ -29,7 +30,6 @@ async def connect_repository(
         )
     
     supabase_jwt = authorization.split(" ")[1]
-    supabase = get_supabase()
     
     # 1. Validate session against Supabase Auth
     try:

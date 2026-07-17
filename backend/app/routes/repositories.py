@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
-from app.core.supabase import get_supabase
+from app.dependencies import get_db
 from app.models.schemas import (
     ChatRequest,
     ChatResponse,
@@ -38,7 +38,7 @@ router = APIRouter(prefix="/repositories", tags=["repositories"])
 
 
 def _get_demo_user_id() -> str:
-    supabase = get_supabase()
+    supabase = get_db()
     existing = supabase.table("users").select("id").eq("github_id", 0).limit(1).execute()
     if existing.data:
         return existing.data[0]["id"]
@@ -60,9 +60,12 @@ def _run_analysis(repository_id: str, github_url: str) -> None:
         logger.error(f"Background analysis failed for {repository_id}: {e}")
 
 
-@router.post("/", response_model=RepositoryResponse, status_code=202)
-async def submit_repository(body: RepositorySubmitRequest, background_tasks: BackgroundTasks):
-    supabase = get_supabase()
+@router.post("/", response_model=RepositoryResponse, status_code=202,
+    summary="Submit a repository for analysis",
+    description="Creates a repository record and triggers background analysis: clone, parse files, extract commits, and store in Supabase.",
+    tags=["repositories"],
+)
+async def submit_repository(body: RepositorySubmitRequest, background_tasks: BackgroundTasks, supabase = Depends(get_db)):
 
     if not RepoAnalyzer._validate_url(injected_url=body.github_url):
         raise HTTPException(status_code=400, detail="Invalid GitHub URL. Must be https://github.com/<owner>/<repo>")
@@ -102,10 +105,8 @@ async def submit_repository(body: RepositorySubmitRequest, background_tasks: Bac
     )
 
 
-@router.post("/{repo_id}/analyze", response_model=RepositoryResponse)
-async def trigger_analysis(repo_id: UUID, background_tasks: BackgroundTasks):
-    supabase = get_supabase()
-
+@router.post("/{repo_id}/analyze", response_model=RepositoryResponse, summary="Manually trigger analysis", tags=["repositories"])
+async def trigger_analysis(repo_id: UUID, background_tasks: BackgroundTasks, supabase = Depends(get_db)):
     repo_response = supabase.table("repositories").select("*").eq("id", str(repo_id)).execute()
     if not repo_response.data:
         raise HTTPException(status_code=404, detail="Repository not found")
@@ -121,13 +122,12 @@ async def trigger_analysis(repo_id: UUID, background_tasks: BackgroundTasks):
     )
 
 
-@router.get("/", response_model=RepositoryListResponse)
-async def list_repositories(
-    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+@router.get("/", response_model=RepositoryListResponse, summary="List all repositories", tags=["repositories"])
+async def list_repositories(user_id: Optional[str] = Query(None, description="Filter by user ID"),
     limit: int = Query(20, le=100),
     offset: int = 0,
+    supabase = Depends(get_db),
 ):
-    supabase = get_supabase()
 
     query = supabase.table("repositories").select("*")
     if user_id:
@@ -169,9 +169,8 @@ async def list_repositories(
     return RepositoryListResponse(repositories=repos)
 
 
-@router.get("/{repo_id}", response_model=RepositoryResponse)
-async def get_repository_status(repo_id: UUID):
-    supabase = get_supabase()
+@router.get("/{repo_id}", response_model=RepositoryResponse, summary="Get repository analysis status", tags=["repositories"])
+async def get_repository_status(repo_id: UUID, supabase = Depends(get_db)):
 
     repo_response = supabase.table("repositories").select("*").eq("id", str(repo_id)).execute()
     if not repo_response.data:
@@ -242,9 +241,8 @@ async def get_repository_status(repo_id: UUID):
     )
 
 
-@router.post("/{repo_id}/chat", response_model=ChatResponse)
-async def chat_with_repository(repo_id: UUID, body: ChatRequest):
-    supabase = get_supabase()
+@router.post("/{repo_id}/chat", response_model=ChatResponse, summary="Chat with a repository", tags=["chat"])
+async def chat_with_repository(repo_id: UUID, body: ChatRequest, supabase = Depends(get_db)):
 
     repo_response = supabase.table("repositories").select("id").eq("id", str(repo_id)).execute()
     if not repo_response.data:
@@ -275,9 +273,8 @@ async def chat_with_repository(repo_id: UUID, body: ChatRequest):
     raise HTTPException(status_code=500, detail="Failed to store chat message")
 
 
-@router.get("/{repo_id}/chat", response_model=list[ChatResponse])
-async def get_chat_history(repo_id: UUID, limit: int = Query(50, le=100)):
-    supabase = get_supabase()
+@router.get("/{repo_id}/chat", response_model=list[ChatResponse], summary="Get chat history", tags=["chat"])
+async def get_chat_history(repo_id: UUID, limit: int = Query(50, le=100), supabase = Depends(get_db)):
 
     response = (
         supabase.table("chat_history")
@@ -300,13 +297,12 @@ async def get_chat_history(repo_id: UUID, limit: int = Query(50, le=100)):
     ]
 
 
-@router.get("/{repo_id}/timeline", response_model=TimelineResponse)
-async def get_repository_timeline(
-    repo_id: UUID,
+@router.get("/{repo_id}/timeline", response_model=TimelineResponse, summary="Get commit timeline", tags=["timeline"])
+async def get_repository_timeline(repo_id: UUID,
     limit: int = Query(100, le=500),
     offset: int = 0,
+    supabase = Depends(get_db),
 ):
-    supabase = get_supabase()
 
     repo_response = supabase.table("repositories").select("id").eq("id", str(repo_id)).execute()
     if not repo_response.data:
@@ -375,13 +371,12 @@ def _extract_imports(content: str) -> list[str]:
     return list(dict.fromkeys(modules))
 
 
-@router.get("/{repo_id}/graph", response_model=GraphResponse)
-async def get_repository_graph(
-    repo_id: UUID,
+@router.get("/{repo_id}/graph", response_model=GraphResponse, summary="Get knowledge graph (nodes + edges)", tags=["graph"])
+async def get_repository_graph(repo_id: UUID,
     depth: int = Query(0, ge=0, le=5),
     focus: Optional[str] = Query(None),
+    supabase = Depends(get_db),
 ):
-    supabase = get_supabase()
 
     repo_response = supabase.table("repositories").select("id").eq("id", str(repo_id)).execute()
     if not repo_response.data:
