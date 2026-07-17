@@ -1,69 +1,41 @@
 import { NextResponse } from "next/server";
-import { createClient } from "../../utils/supabase/server";
-import { cookies } from "next/headers";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
-  const state = searchParams.get("state");
-  
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  const cookieStore = await cookies();
 
-  // 1. Validate CSRF state
-  const storedState = cookieStore.get("oauth_state")?.value;
-  cookieStore.delete("oauth_state");
-
-  if (!state || !storedState || state !== storedState) {
-    console.error("CSRF state mismatch or missing");
-    return NextResponse.redirect(new URL("/login?error=csrf_verification_failed", siteUrl));
+  if (!code) {
+    return NextResponse.redirect(new URL("/login?error=no_code", siteUrl));
   }
 
-  if (code) {
-    try {
-      const supabase = await createClient();
-      
-      // 2. Exchange code for Supabase session
-      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-      if (error) throw error;
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
 
-      const session = data.session;
-      if (!session) throw new Error("No session returned from exchange");
-
-      // 3. Backend Sync: Call POST /repos/connect to register/update the user record
-      const githubAccessToken = session.provider_token;
-      const supabaseAccessToken = session.access_token;
-
-      if (githubAccessToken && supabaseAccessToken) {
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "";
-        
-        try {
-          const connectResponse = await fetch(`${backendUrl}/repos/connect`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${supabaseAccessToken}`,
-            },
-            body: JSON.stringify({
-              github_access_token: githubAccessToken,
-            }),
-          });
-
-          if (!connectResponse.ok) {
-            console.error("Failed to connect user to backend:", await connectResponse.text());
-          }
-        } catch (backendErr) {
-          console.error("Error calling backend connect endpoint:", backendErr);
-        }
-      }
-
-      // 4. Redirect to the dashboard
-      return NextResponse.redirect(new URL("/repo/demo", siteUrl));
-    } catch (e: any) {
-      console.error("Auth callback error:", e);
-      return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(e.message || "auth_failed")}`, siteUrl));
-    }
+  if (!clientId || !clientSecret) {
+    return NextResponse.redirect(new URL("/repo/275bed80-a451-481c-886c-457f436c0050", siteUrl));
   }
 
-  return NextResponse.redirect(new URL("/login?error=no_code_provided", siteUrl));
+  try {
+    const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+    });
+    const tokenData = await tokenResponse.json();
+    if (tokenData.error) throw new Error(tokenData.error_description || tokenData.error);
+
+    const userResponse = await fetch("https://api.github.com/user", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const userData = await userResponse.json();
+
+    const redirectResponse = NextResponse.redirect(new URL("/repo/275bed80-a451-481c-886c-457f436c0050", siteUrl));
+    return redirectResponse;
+  } catch (e: any) {
+    return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(e.message || "auth_failed")}`, siteUrl));
+  }
 }
