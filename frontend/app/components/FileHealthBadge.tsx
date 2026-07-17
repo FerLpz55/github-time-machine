@@ -22,7 +22,7 @@ export default function FileHealthBadge({ repoId, path, showLabel = false }: { r
       setLoading(true);
       try {
         const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-        const url = `${API_URL}/repos/${repoId}/file_health?path=${encodeURIComponent(path)}`;
+        const url = `${API_URL}/repositories/${repoId}/file_health?path=${encodeURIComponent(path)}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error("Failed to load health");
         const json = await res.json();

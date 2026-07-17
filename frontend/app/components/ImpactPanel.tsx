@@ -76,7 +76,7 @@ export default function ImpactPanel({ repoId }: { repoId: string }) {
       setBugOriginResult(null);
 
       const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${API_URL}/repos/${repoId}/impact`, {
+      const res = await fetch(`${API_URL}/repositories/${repoId}/impact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -105,7 +105,7 @@ export default function ImpactPanel({ repoId }: { repoId: string }) {
       setBugOriginResult(null);
 
       const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${API_URL}/repos/${repoId}/bug_origin`, {
+      const res = await fetch(`${API_URL}/repositories/${repoId}/bug_origin`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ file_path: selectedFile }),
