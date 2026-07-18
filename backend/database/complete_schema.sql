@@ -91,7 +91,9 @@ create table if not exists functions (
     start_line integer not null,
     end_line integer not null,
     is_exported boolean default false,
-    created_at timestamptz default now()
+    created_at timestamptz default now(),
+    -- required by RepoAnalyzer's upsert(on_conflict="file_id, name, start_line")
+    unique (file_id, name, start_line)
 );
 
 create table if not exists edges (
@@ -104,7 +106,9 @@ create table if not exists edges (
     source_name text,
     target_name text,
     metadata jsonb default '{}'::jsonb,
-    created_at timestamptz default now()
+    created_at timestamptz default now(),
+    -- required by RepoAnalyzer's upsert(on_conflict="repository_id, source_id, target_id, edge_type")
+    unique (repository_id, source_id, target_id, edge_type)
 );
 
 

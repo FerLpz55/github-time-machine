@@ -65,8 +65,7 @@ backend/
 │       ├── commit_analyzer.py       # CommitAnalyzer: GitPython extraction + Supabase upsert
 │       └── chat_service.py          # ChatService: OpenAI chat with prompt-injection + moderation guards
 ├── database/
-│   ├── schema_v2.sql            # functions + edges tables (optional, for Knowledge Graph v2)
-│   └── complete_schema.sql      # Full DDL snapshot
+│   └── complete_schema.sql      # Full DDL — includes functions + edges (must be applied to Supabase, see below)
 ├── main.py                      # Entry: from app.main import app
 ├── pre_seed.py                  # Pre-seed a demo repo into Supabase
 ├── Procfile                     # Railway start command
@@ -148,6 +147,10 @@ This clones a repo (default: `tiangolo/typer`), runs the full analysis pipeline 
 
 ## Important Notes
 
+- **Run `database/complete_schema.sql` in the Supabase SQL Editor before analyzing any repo.** It's idempotent (`create table if not exists`), so re-running it is safe. Analysis writes to `functions` and `edges` (via `RepoAnalyzer._extract_and_store_symbols`) — if those tables (with their `unique` constraints) aren't applied yet, every analysis will fail on the first upsert. Check with:
+  ```sql
+  select tablename from pg_tables where schemaname = 'public' and tablename in ('functions', 'edges');
+  ```
 - The backend uses `Depends(get_db)` for Supabase access — all route handlers receive the client via FastAPI's dependency injection.
 - Routes that only make synchronous Supabase calls are declared as plain `def`, not `async def` — FastAPI runs those in a threadpool automatically instead of blocking the event loop. `/repos/connect` stays `async def` (it does real async I/O against the GitHub API via `httpx`) and wraps its own synchronous Supabase calls in `run_in_threadpool`.
 - Without an `OPENAI_API_KEY`, embedding generation and chat both fail gracefully (embeddings are skipped per-batch and logged as non-fatal; chat returns an error message) — the rest of the pipeline still completes.
