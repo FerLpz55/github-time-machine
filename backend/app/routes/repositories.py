@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 _FIX_PATTERN = re.compile(r"\b(fix|bug|patch|hotfix|resolve|close)\b", re.IGNORECASE)
 _MERGE_PATTERN = re.compile(r"^merge", re.IGNORECASE)
+_IMPORT_PY = re.compile(r"(?:from\s+(\S+)\s+import|import\s+(\S+))")
+_IMPORT_JS = re.compile(r"""(?:import\s+.*?\s+from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))""")
 
 router = APIRouter(prefix="/repositories", tags=["repositories"])
 
@@ -378,7 +380,7 @@ def get_repository_graph(repo_id: UUID,
 
     files_response = (
         supabase.table("files")
-        .select("id, file_path, language, size")
+        .select("id, file_path, language, size, content")
         .eq("repository_id", str(repo_id))
         .execute()
     )
@@ -405,14 +407,67 @@ def get_repository_graph(repo_id: UUID,
         .execute()
     )
 
-    edges = [
-        GraphEdge(
-            source=f"file:{e['source_id']}",
-            target=f"file:{e['target_id']}",
-            type="imports",
-            label=f"imports {e.get('target_name', '')}",
-        )
-        for e in (edges_response.data or [])
-    ]
+    if edges_response.data:
+        edges = [
+            GraphEdge(
+                source=f"file:{e['source_id']}",
+                target=f"file:{e['target_id']}",
+                type="imports",
+                label=f"imports {e.get('target_name', '')}",
+            )
+            for e in edges_response.data
+        ]
+    else:
+        edges = _build_edges_from_content(files_response.data, nodes)
 
     return GraphResponse(nodes=nodes, edges=edges)
+
+
+def _extract_imports(content: str) -> list[str]:
+    modules: list[str] = []
+    for m in _IMPORT_PY.finditer(content):
+        module = m.group(1) or m.group(2)
+        if module:
+            modules.append(module.split(".")[0])
+    for m in _IMPORT_JS.finditer(content):
+        module = m.group(1) or m.group(2)
+        if module and not module.startswith("."):
+            parts = module.split("/")
+            modules.append(parts[0] if parts[0] else parts[1] if len(parts) > 1 else module)
+    return list(dict.fromkeys(modules))
+
+
+def _build_edges_from_content(files_data: list[dict], nodes: list[GraphNode]) -> list[GraphEdge]:
+    """Fallback: parse imports from file content when edges table is empty."""
+    file_index = {}
+    for i, f in enumerate(files_data):
+        file_index[f["file_path"]] = i
+
+    edges = []
+    for f in files_data:
+        content = f.get("content") or ""
+        if not content:
+            continue
+
+        source_id = f"file:{f['id']}"
+        imports = _extract_imports(content)
+
+        for module in imports:
+            target_path = None
+            for path in file_index:
+                path_clean = path.replace("/", ".").replace(".py", "").replace(".ts", "").replace(".tsx", "").replace(".js", "").replace(".jsx", "")
+                if module in path_clean or path_clean.endswith(module):
+                    target_path = path
+                    break
+
+            if target_path and target_path != f["file_path"]:
+                target_id = nodes[file_index[target_path]].id
+                if target_id != source_id:
+                    edges.append(GraphEdge(
+                        source=source_id,
+                        target=target_id,
+                        type="imports",
+                        label=f"imports {module}",
+                    ))
+
+    return edges
