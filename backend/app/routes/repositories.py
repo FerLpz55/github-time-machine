@@ -60,6 +60,14 @@ def _run_analysis(repository_id: str, github_url: str) -> None:
         logger.info(f"Analysis complete for {repository_id}: {result}")
     except Exception as e:
         logger.error(f"Background analysis failed for {repository_id}: {e}")
+        try:
+            supabase = get_db()
+            supabase.table("analyses").update({
+                "status": "error",
+                "error_message": str(e)[:500],
+            }).eq("repository_id", repository_id).execute()
+        except Exception as db_err:
+            logger.error(f"Failed to update error status for {repository_id}: {db_err}")
 
 
 @router.post("/", response_model=RepositoryResponse, status_code=202,

@@ -98,10 +98,8 @@ class RepoAnalyzer:
     def _validate_url(url: str | None = None, injected_url: str | None = None) -> bool:
         target = injected_url or url
         if not target:
-            raise ValueError("GitHub URL is required")
-        if not re.match(r"^https://github\.com/[^/]+/[^/]+", target):
-            raise ValueError(f"Invalid GitHub URL: {target}")
-        return True
+            return False
+        return bool(re.match(r"^https://github\.com/[^/]+/[^/]+", target))
 
     def _walk(self, root: str) -> list[dict]:
         results = []

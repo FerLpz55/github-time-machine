@@ -1,9 +1,10 @@
+import os
 import time
 from collections import defaultdict
 
 from fastapi import Request, HTTPException
 
-MAX_REQUESTS = int(__import__("os").getenv("RATE_LIMIT_MAX", "60"))
+MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX", "60"))
 WINDOW_SECONDS = 60
 
 _requests: dict[str, list[float]] = defaultdict(list)
