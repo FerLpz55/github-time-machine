@@ -45,6 +45,7 @@ class RepoAnalyzer:
 
         try:
             clone_path = self._cloner.clone()
+            self._clear_previous_analysis()
             files = self._walker.walk(clone_path)
             stored_count = self._store_files(files)
 
@@ -107,6 +108,18 @@ class RepoAnalyzer:
         embeddings = self._embedder.generate(batch)
         for file_id, embedding in embeddings.items():
             self.supabase.table("files").update({"embedding": embedding}).eq("id", file_id).execute()
+
+    def _clear_previous_analysis(self) -> None:
+        """Wipe this repository's files/functions/edges before re-storing them.
+
+        Files are plain inserts (not upserts), so re-running analyze() on an
+        already-analyzed repo would otherwise duplicate every file on each
+        run. `edges` has no FK to `files`, so it won't cascade-delete when
+        files are removed and must be cleared explicitly.
+        """
+        self.supabase.table("edges").delete().eq("repository_id", self.repository_id).execute()
+        self.supabase.table("functions").delete().eq("repository_id", self.repository_id).execute()
+        self.supabase.table("files").delete().eq("repository_id", self.repository_id).execute()
 
     def _build_file_id_map(self) -> dict[str, str]:
         response = (
