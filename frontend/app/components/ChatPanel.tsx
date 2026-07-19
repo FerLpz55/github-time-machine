@@ -1,35 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChatBubbleLeftRightIcon } from "@heroicons/react/24/outline";
 
 interface Message { role: "user" | "assistant"; content: string; }
-interface ChatRecord { id: string; question: string; answer: string; created_at: string; }
 
 export default function ChatPanel({ repoId }: { repoId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-        const res = await fetch(`${API_URL}/repositories/${repoId}/chat`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          const msgs: Message[] = [];
-          data.forEach((r: ChatRecord) => {
-            msgs.push({ role: "user", content: r.question });
-            msgs.push({ role: "assistant", content: r.answer });
-          });
-          setMessages(msgs);
-        }
-      } catch {}
-    })();
-  }, [repoId]);
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
