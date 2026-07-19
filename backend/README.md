@@ -1,89 +1,67 @@
-# GitHub Time Machine Core Backend
+# GitHub Time Machine — Core Backend
 
-The `backend` service is the core application API for GitHub Time Machine. It handles repository submission, analysis pipeline, graph/timeline endpoints, OAuth, and Supabase access.
+Single FastAPI service that handles repository analysis, AI orchestration, and user authentication.
 
-## Responsibilities
+## Architecture
 
-- Create repository records and trigger background analysis (clone → walk → store files → extract functions/classes/import-edges via Tree-sitter → extract commits → update metadata)
-- Serve graph data (file nodes + import edges, read from the `edges` table populated during analysis) and commit timelines
-- Answer repository questions via OpenAI chat, with prompt-injection filtering and the Moderation API as a second guard
-- Store and retrieve chat history
-- Centralize Supabase client configuration and dependency injection
-- Pre-seed demo repositories for the hackathon
-
-## Technologies
-
-- **FastAPI** + Uvicorn — async API server
-- **Pydantic** — request/response schemas with Field validators and StrEnum
-- **Supabase Python client** — Postgres + pgvector access via service_role key
-- **GitPython** — commit history extraction
-- **Tree-sitter** — AST parsing for Python and JavaScript/TypeScript
-- **OpenAI SDK** — text-embedding-3-small for vector embeddings (optional)
-- **python-dotenv** — local environment configuration
-
-## Design Patterns
-
-| Pattern | Where | Why |
-|---------|-------|-----|
-| **Facade** | `RepoAnalyzer.analyze()` | Orchestrates the collaborators below behind one call; doesn't implement their logic itself |
-| **Extract Class collaborators** | `RepoCloner`, `FileWalker`, `SymbolExtractor`, `EmbeddingGenerator` | Each owns one pipeline stage (clone, walk, parse, embed) — `RepoAnalyzer` only coordinates + persists |
-| **Singleton** | `get_supabase()` | Single DB client for the whole process |
-| **Strategy** | `SymbolExtractor._get_lang` + per-language tree-sitter queries | Different parsing grammar/queries per language |
-| **Dependency Injection** | `Depends(get_db)` | Routes receive the DB client, don't create it |
-| **Template Method** | `analyze()` → clone → walk → store files → extract symbols/edges → extract commits → update metadata | Fixed sequence, each step delegated to a collaborator |
-
-## Folder Structure
-
-```text
+```
 backend/
 ├── app/
-│   ├── __init__.py              # Package docs
-│   ├── main.py                  # FastAPI app, CORS, router mounting
-│   ├── dependencies.py          # FastAPI DI: get_db()
-│   ├── utils.py                 # Shared: parse_github_url()
+│   ├── __init__.py
+│   ├── main.py                   # App entry, CORS, router mounting, rate limiting
+│   ├── dependencies.py           # FastAPI DI: get_db()
+│   ├── utils.py                  # Shared: parse_github_url()
 │   ├── core/
-│   │   ├── __init__.py
-│   │   ├── config.py            # All env vars + analysis constants
-│   │   └── supabase.py          # Singleton Supabase client (service_role)
+│   │   ├── config.py             # Env vars + analysis constants
+│   │   ├── supabase.py           # Singleton Supabase client (service_role)
+│   │   └── rate_limit.py         # 60 req/min per IP middleware
 │   ├── models/
-│   │   ├── __init__.py
-│   │   ├── schemas.py           # API request/response (RepositoryStatus StrEnum, Field validators)
-│   │   ├── tables.py            # DB table models (User, Repository, Commit, FileRecord, etc.)
-│   │   └── embeddings.py        # FileEmbedding, CodeChunk
+│   │   ├── schemas.py            # Repository, Chat, Graph, Timeline schemas
+│   │   ├── tables.py             # DB table models
+│   │   ├── embeddings.py         # FileEmbedding, CodeChunk
+│   │   ├── heatmap.py            # DebtScore, HeatmapResponse
+│   │   ├── health.py             # FileHealthScore
+│   │   ├── impact.py             # ImpactRequest, ImpactResult, AffectedFile
+│   │   ├── bug_origin.py         # BugOriginRequest, BugOriginResponse
+│   │   └── refactor_plan.py      # RefactorPlanRequest, RefactorPlanResponse
 │   ├── routes/
-│   │   ├── __init__.py
-│   │   ├── health.py            # GET /health, GET /
-│   │   ├── repositories.py      # Repo CRUD, chat, timeline, graph
-│   │   └── repos.py             # POST /repos/connect (OAuth)
-│   └── services/
-│       ├── __init__.py
-│       ├── repo_analyzer.py         # RepoAnalyzer: Facade — orchestrates the pipeline below, persists to Supabase
-│       ├── repo_cloner.py           # RepoCloner: validate URL, git clone to temp dir, cleanup
-│       ├── file_walker.py           # FileWalker: walk working tree, filter vendored/binary files
-│       ├── symbol_extractor.py      # SymbolExtractor: Tree-sitter parsing (functions/classes/imports)
-│       ├── embedding_generator.py   # EmbeddingGenerator: OpenAI embeddings, one client reused per job
-│       ├── commit_analyzer.py       # CommitAnalyzer: GitPython extraction + Supabase upsert
-│       └── chat_service.py          # ChatService: OpenAI chat with prompt-injection + moderation guards
+│   │   ├── health.py             # GET /health, GET /
+│   │   ├── repositories.py       # Repo CRUD, graph, timeline, chat
+│   │   ├── repos.py              # POST /repos/connect (GitHub OAuth)
+│   │   └── ai_endpoints.py       # Heatmap, file_health, impact, bug_origin, refactor_plan
+│   ├── services/
+│   │   ├── repo_analyzer.py      # Facade — orchestrates analysis pipeline
+│   │   ├── repo_cloner.py        # Validate URL + git clone
+│   │   ├── file_walker.py        # Walk tree, filter vendored/binary files
+│   │   ├── symbol_extractor.py   # Tree-sitter (functions/classes/imports)
+│   │   ├── embedding_generator.py # OpenAI embeddings (optional)
+│   │   ├── commit_analyzer.py    # GitPython extraction + Supabase upsert
+│   │   └── chat_service.py       # OpenAI chat + prompt injection + moderation
+│   └── prompts/
+│       ├── impact_analysis.j2     # Change impact prompt template
+│       ├── bug_origin.j2          # Bug origin prompt template
+│       └── refactor_plan.j2       # Refactor plan prompt template
 ├── database/
-│   └── complete_schema.sql      # Full DDL — includes functions + edges (must be applied to Supabase, see below)
-├── main.py                      # Entry: from app.main import app
-├── pre_seed.py                  # Pre-seed a demo repo into Supabase
-├── Procfile                     # Railway start command
-├── railway.json                 # Railway deploy config (Nixpacks)
-├── nixpacks.toml                # apt packages for Railway (git)
+│   ├── complete_schema.sql       # Full DDL (users, repos, commits, files, edges, etc.)
+│   └── migration_functions_edges.sql
+├── main.py                       # Entry: from app.main import app
+├── pre_seed.py                   # Pre-seed demo repo into Supabase
+├── Procfile                      # Railway start command
+├── railway.json                  # Railway deploy config
+├── nixpacks.toml                 # apt packages (git)
 ├── requirements.txt
-├── .env.example
-└── .gitignore
+└── .env.example
 ```
 
-## How To Run
+## Quick Start
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+# Set SUPABASE_URL, SUPABASE_SERVICE_KEY, OPENAI_API_KEY
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -95,66 +73,86 @@ Open http://localhost:8000/docs for Swagger UI.
 |----------|----------|---------|-------------|
 | `SUPABASE_URL` | Yes | — | Supabase project URL |
 | `SUPABASE_SERVICE_KEY` | Yes | — | Service role key (bypasses RLS) |
-| `SUPABASE_ANON_KEY` | No | — | Anon key (not used by backend) |
-| `CORS_ORIGINS` | No | `*` | Comma-separated allowed origins (`*` implies `allow_credentials=False`) |
-| `OPENAI_API_KEY` | No | — | OpenAI key for embeddings + chat (both degrade gracefully without it) |
-| `OPENAI_EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model name |
-| `CHAT_MODEL` | No | `gpt-4o-mini` | Chat completion model for `/repositories/{id}/chat` |
+| `OPENAI_API_KEY` | No | — | OpenAI key for chat + AI endpoints |
+| `CHAT_MODEL` | No | `gpt-4o-mini` | Chat completion model |
 | `CHAT_MAX_TOKENS` | No | `1024` | Max tokens per chat response |
-| `CHAT_TEMPERATURE` | No | `0.4` | Chat completion temperature |
-| `EMBEDDING_DIMENSION` | No | `1536` | Vector dimension for pgvector |
-| `ANALYSIS_MAX_FILE_SIZE` | No | `1000000` | Skip files larger than this (bytes) |
-| `ANALYSIS_EMBED_BATCH_SIZE` | No | `20` | Files per embedding API call |
-| `ANALYSIS_CLONE_DEPTH` | No | `1` | Git clone depth |
-| `ANALYSIS_EMBED_CHUNK_SIZE` | No | `8000` | Chars per embedding chunk |
+| `CHAT_TEMPERATURE` | No | `0.4` | Chat temperature |
+| `CORS_ORIGINS` | No | `*` | Comma-separated allowed origins |
 
-## API Endpoints
+## Endpoints
 
-| Method | Endpoint | Tags | Purpose |
-|--------|----------|------|---------|
-| `GET` | `/health` | health | Health check |
-| `GET` | `/` | health | API info |
-| `POST` | `/repositories/` | repositories | Submit a repo URL — triggers background analysis |
-| `GET` | `/repositories/` | repositories | List all repositories with status |
-| `GET` | `/repositories/{id}` | repositories | Get analysis status + file/commit counts |
-| `POST` | `/repositories/{id}/analyze` | repositories | Manually re-trigger analysis |
-| `POST` | `/repositories/{id}/chat` | chat | Chat with a repository via OpenAI, grounded in stored README/files/commits |
-| `GET` | `/repositories/{id}/chat` | chat | Get chat history |
-| `GET` | `/repositories/{id}/timeline` | timeline | Commit timeline + fix/merge detection + stats |
-| `GET` | `/repositories/{id}/graph` | graph | Knowledge graph — files as nodes, import edges read from the `edges` table (populated by analysis, not re-parsed per request) |
-| `POST` | `/repos/connect` | auth | OAuth — validate JWT + sync GitHub user |
+All endpoints use the prefix `https://github-time-machine-production.up.railway.app`
 
-## Deployment (Railway)
+### System
 
-The backend is deployed on Railway using Nixpacks. Configuration:
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/` | API info |
 
-- **Root Directory**: `backend/`
-- **Builder**: Nixpacks (auto-detects Python via `requirements.txt`)
-- **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- **Procfile** and **railway.json** are provided in the repo
+### Repositories
 
-See the [Railway FastAPI guide](https://docs.railway.com/guides/fastapi) for more details.
+| Method | Path | Body/Query | Description |
+|--------|------|------------|-------------|
+| `POST` | `/repositories/` | `{"github_url": "..."}` | Submit repo for analysis |
+| `GET` | `/repositories/` | — | List all repos |
+| `GET` | `/repositories/{id}` | — | Status + file/commit counts |
+| `POST` | `/repositories/{id}/analyze` | — | Re-trigger analysis |
 
-## Pre-Seeding a Demo Repo
+### AI Panels
 
-```bash
-cd backend
-source venv/bin/activate
-python pre_seed.py
-```
+| Method | Path | Body/Query | Description |
+|--------|------|------------|-------------|
+| `GET` | `/repositories/{id}/graph?depth=2` | — | Knowledge graph (files + edges) |
+| `GET` | `/repositories/{id}/timeline` | — | Commit timeline |
+| `GET` | `/repositories/{id}/heatmap` | — | Technical debt heatmap |
+| `GET` | `/repositories/{id}/file_health?path=...` | — | Per-file health score |
+| `POST` | `/repositories/{id}/chat` | `{"repository_id": "...", "question": "..."}` | AI chat |
+| `GET` | `/repositories/{id}/chat` | — | Chat history |
+| `POST` | `/repositories/{id}/impact` | `{"target": "...", "change_type": "modify"}` | Change impact |
+| `POST` | `/repositories/{id}/bug_origin` | `{"file_path": "..."}` | Bug origin |
+| `POST` | `/repositories/{id}/refactor_plan` | `{"since_days": 30}` | Refactor plan |
 
-This clones a repo (default: `tiangolo/typer`), runs the full analysis pipeline locally, and uploads the results to Supabase. The Railway API then serves this data instantly without background task timeouts.
+### Auth
 
-## Important Notes
+| Method | Path | Headers | Body | Description |
+|--------|------|---------|------|-------------|
+| `POST` | `/repos/connect` | `Authorization: Bearer <jwt>` | `{"github_access_token": "..."}` | Sync GitHub user |
 
-- **Run `database/complete_schema.sql` in the Supabase SQL Editor before analyzing any repo.** It's idempotent (`create table if not exists`), so re-running it is safe. Analysis writes to `functions` and `edges` (via `RepoAnalyzer._extract_and_store_symbols`) — if those tables (with their `unique` constraints) aren't applied yet, every analysis will fail on the first upsert. Check with:
-  ```sql
-  select tablename from pg_tables where schemaname = 'public' and tablename in ('functions', 'edges');
-  ```
-- The backend uses `Depends(get_db)` for Supabase access — all route handlers receive the client via FastAPI's dependency injection.
-- Routes that only make synchronous Supabase calls are declared as plain `def`, not `async def` — FastAPI runs those in a threadpool automatically instead of blocking the event loop. `/repos/connect` stays `async def` (it does real async I/O against the GitHub API via `httpx`) and wraps its own synchronous Supabase calls in `run_in_threadpool`.
-- Without an `OPENAI_API_KEY`, embedding generation and chat both fail gracefully (embeddings are skipped per-batch and logged as non-fatal; chat returns an error message) — the rest of the pipeline still completes.
-- Background analysis via `BackgroundTasks` may timeout on Railway for large repos (>30s). Use `pre_seed.py` locally for large repos.
-- `RepoCloner.validate_url` validates GitHub URLs before cloning to prevent SSRF (`^https://github\\.com/...`).
-- `CORS_ORIGINS=*` (the default) disables `allow_credentials` automatically — browsers reject credentialed requests against a wildcard origin, so don't rely on cookies/auth headers across origins unless `CORS_ORIGINS` is set to explicit origins.
-- Row Level Security is configured on all Supabase tables; the backend uses `service_role` key to bypass it.
+## Database
+
+Apply `database/complete_schema.sql` in Supabase SQL Editor before analyzing any repo. Tables:
+
+- `users` — GitHub-authenticated users
+- `repositories` — Analyzed repos with status
+- `commits` — Commit history per repo
+- `files` — Source files with paths and metadata
+- `analyses` — Analysis run metadata
+- `chat_history` — Persisted chat messages
+- `functions` — Extracted functions/classes per file
+- `edges` — Import/dependency edges between files
+
+## Design Patterns
+
+| Pattern | Location | Purpose |
+|---------|----------|---------|
+| **Facade** | `RepoAnalyzer.analyze()` | Single call orchestrates clone → walk → symbols → commits |
+| **Singleton** | `get_supabase()` | One DB client per process |
+| **Strategy** | `SymbolExtractor` | Per-language tree-sitter queries |
+| **DI** | `Depends(get_db)` | Routes receive client, don't create it |
+| **Template Method** | Analysis pipeline | Fixed sequence delegated to collaborators |
+
+## Deployment
+
+Deployed on Railway via Nixpacks:
+- Root: `backend/`
+- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- URL: `https://github-time-machine-production.up.railway.app`
+
+## Notes
+
+- Run `database/complete_schema.sql` in Supabase before use — the `functions`/`edges` tables with UNIQUE constraints are required
+- Without `OPENAI_API_KEY`, AI endpoints fall back gracefully
+- Rate limit: 60 req/min per IP (health/docs bypassed)
+- Pre-seed: `python pre_seed.py` clones a repo and runs full analysis locally
+- RLS enabled on all tables; backend uses `service_role` key to bypass
