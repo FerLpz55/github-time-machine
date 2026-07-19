@@ -22,11 +22,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/repositories/{repo_id}", tags=["ai"])
 
 _prompts_dir = os.path.join(os.path.dirname(__file__), "..", "prompts")
-_jinja = Environment(loader=FileSystemLoader(_prompts_dir), autoescape=select_autoescape())
+try:
+    _jinja = Environment(loader=FileSystemLoader(_prompts_dir), autoescape=select_autoescape())
+except Exception as e:
+    _jinja = None
+    logger.error("Failed to load jinja2 Environment: %s", e)
 
 
 def _openai_configured() -> bool:
     return bool(os.getenv("OPENAI_API_KEY"))
+
+
+# ── Health (diagnostic) ─────────────────────────────────────────────────
+
+@router.get("/_ai_health")
+def ai_health(repo_id: UUID, supabase=Depends(get_db)):
+    """Diagnostic endpoint — returns AI subsystem status."""
+    commits_result = supabase.table("commits").select("commit_sha").eq("repository_id", str(repo_id)).limit(1).execute()
+    return {
+        "jinja2_loaded": _jinja is not None,
+        "openai_key_configured": _openai_configured(),
+        "templates_available": os.listdir(_prompts_dir) if os.path.isdir(_prompts_dir) else [],
+        "commits_work": commits_result.data is not None,
+    }
 
 
 # ── Heatmap ─────────────────────────────────────────────────────────────
