@@ -204,102 +204,101 @@ def get_impact(repo_id: UUID, body: ImpactRequest, supabase=Depends(get_db)):
         r = repo.data[0]
         repo_name = f"{r.get('owner','unknown')}/{r.get('name','unknown')}"
 
-    edges = (
-        supabase.table("edges")
-        .select("source_name, target_name, edge_type")
-        .eq("repository_id", repo_id_str)
-        .execute()
-    )
-
-    files = supabase.table("files").select("file_path, language, size").eq("repository_id", repo_id_str).execute()
-    all_paths = {f["file_path"] for f in (files.data or [])}
-
     deps: list[dict] = []
-    if edges.data:
-        seen = set()
-        for e in edges.data:
-            source = e.get("source_name", "")
-            target_e = e.get("target_name", "")
-            edge_type = e.get("edge_type", "imports")
-            if source and source in all_paths and source not in seen:
-                seen.add(source)
-                deps.append({"path": source, "relationship": edge_type, "functions": []})
-            if target_e and target_e in all_paths and target_e not in seen:
-                seen.add(target_e)
-                deps.append({"path": target_e, "relationship": edge_type, "functions": []})
-
-    commits = (
-        supabase.table("commits")
-        .select("commit_sha, author, message, commit_date")
-        .eq("repository_id", repo_id_str)
-        .order("commit_date", desc=True)
-        .limit(5)
-        .execute()
-    )
-
-    recent = []
-    if commits.data:
-        for c in commits.data:
-            if target in (c.get("message") or ""):
-                recent.append({
-                    "sha": c.get("commit_sha", ""),
-                    "author_name": c.get("author", "unknown"),
-                    "message": (c.get("message") or "")[:100],
-                })
-
-    prompt_context = {
-        "repo": {"full_name": repo_name},
-        "target_path": target,
-        "target_file": None,
-        "change_type": body.change_type,
-        "description": body.description or "",
-        "dependencies": deps[:20],
-        "reverse_deps": [],
-        "recent_commits": recent[:5],
-    }
 
     try:
-        template = _jinja.get_template("impact_analysis.j2")
-        user_prompt = template.render(**prompt_context)
+        edges = (
+            supabase.table("edges")
+            .select("source_name, target_name, edge_type")
+            .eq("repository_id", repo_id_str)
+            .execute()
+        )
+        files = supabase.table("files").select("file_path").eq("repository_id", repo_id_str).execute()
+        all_paths = {f["file_path"] for f in (files.data or [])}
+
+        if edges.data:
+            seen = set()
+            for e in edges.data:
+                source = e.get("source_name", "")
+                target_e = e.get("target_name", "")
+                edge_type = e.get("edge_type", "imports")
+                if source and source in all_paths and source not in seen:
+                    seen.add(source)
+                    deps.append({"path": source, "relationship": edge_type})
+                if target_e and target_e in all_paths and target_e not in seen:
+                    seen.add(target_e)
+                    deps.append({"path": target_e, "relationship": edge_type})
     except Exception as e:
-        logger.warning("jinja2 render failed: %s", e)
-        user_prompt = f"Analyze the impact of {body.change_type} on {target} in {repo_name}."
+        logger.warning("Edges query failed: %s", e)
 
-    system = "You are a code impact analyst. Be specific, reference file paths. Respond in JSON-like structure."
-    messages = _build_messages(system, user_prompt)
+    if _jinja is not None and _openai_configured():
+        try:
+            commits = (
+                supabase.table("commits")
+                .select("commit_sha, author, message, commit_date")
+                .eq("repository_id", repo_id_str)
+                .order("commit_date", desc=True)
+                .limit(5)
+                .execute()
+            )
+            recent = []
+            if commits.data:
+                for c in commits.data:
+                    if target in (c.get("message") or ""):
+                        recent.append({
+                            "sha": c.get("commit_sha", ""),
+                            "author_name": c.get("author", "unknown"),
+                            "message": (c.get("message") or "")[:100],
+                        })
 
-    try:
-        answer = _call_openai(messages, max_tokens=2000)
-    except HTTPException:
+            template = _jinja.get_template("impact_analysis.j2")
+            user_prompt = template.render(
+                repo={"full_name": repo_name},
+                target_path=target,
+                target_file=None,
+                change_type=body.change_type,
+                description=body.description or "",
+                dependencies=deps[:20],
+                reverse_deps=[],
+                recent_commits=recent[:5],
+            )
+            messages = _build_messages("You are a code impact analyst.", user_prompt)
+            answer = _call_openai(messages, max_tokens=2000)
+        except Exception as e:
+            logger.warning("OpenAI/Jinja2 path failed: %s", e)
+            answer = None
+    else:
+        answer = None
+
+    if not answer:
         return ImpactResult(
             target=target,
             change_type=body.change_type,
             risk_score=0.5,
             affected_files=[
-                AffectedFile(path=p, relationship="depends_on", risk_level="low", reason="Edge in graph")
-                for p in [d.get("path", "") for d in deps[:5]]
+                AffectedFile(path=d.get("path", "unknown"), relationship="depends_on", risk_level="low", reason="Edge in graph")
+                for d in (deps[:5] or [{"path": "unknown"}])
             ],
             suggested_tests=["Review affected files for regressions"],
         )
 
     affected = []
     risk = 0.3
-    for line in answer.split("\n"):
+    for line in (answer or "").split("\n"):
         line = line.strip()
         if not line or not line.startswith("-"):
             continue
+        risk_level = "low"
         if "high" in line.lower() or "critical" in line.lower():
-            r = "high"
+            risk_level = "high"
             risk = max(risk, 0.8)
         elif "medium" in line.lower():
-            r = "medium"
+            risk_level = "medium"
             risk = max(risk, 0.5)
-        else:
-            r = "low"
-        affected.append(AffectedFile(path=line.lstrip("- "), relationship="depends_on", risk_level=r, reason=line))
+        affected.append(AffectedFile(path=line.lstrip("- "), relationship="depends_on", risk_level=risk_level, reason=line))
 
     tests = []
-    for line in answer.split("\n"):
+    for line in (answer or "").split("\n"):
         if "test" in line.lower() and line.strip().startswith(("-", "*", "1.", "2.")):
             tests.append(line.lstrip("-* 1234567890.").strip())
 
@@ -308,8 +307,8 @@ def get_impact(repo_id: UUID, body: ImpactRequest, supabase=Depends(get_db)):
         change_type=body.change_type,
         risk_score=round(risk, 2),
         affected_files=affected[:10] or [
-            AffectedFile(path=p, relationship="depends_on", risk_level="low", reason="Edge in graph")
-            for p in [d.get("path", "") for d in deps[:5]]
+            AffectedFile(path=d.get("path", "unknown"), relationship="depends_on", risk_level="low", reason="Edge in graph")
+            for d in (deps[:5] or [{"path": "unknown"}])
         ],
         suggested_tests=tests[:5] or ["Run existing test suite"],
     )
@@ -328,25 +327,25 @@ def get_bug_origin(repo_id: UUID, body: BugOriginRequest, supabase=Depends(get_d
         r = repo.data[0]
         repo_name = f"{r.get('owner','unknown')}/{r.get('name','unknown')}"
 
-    commits = (
-        supabase.table("commits")
-        .select("commit_sha, author, message, commit_date")
-        .eq("repository_id", repo_id_str)
-        .order("commit_date", desc=True)
-        .limit(50)
-        .execute()
-    )
+    try:
+        commits = (
+            supabase.table("commits")
+            .select("commit_sha, author, message, commit_date")
+            .eq("repository_id", repo_id_str)
+            .order("commit_date", desc=True)
+            .limit(50)
+            .execute()
+        )
+    except Exception as e:
+        logger.warning("commits query failed: %s", e)
+        commits = type("obj", (object,), {"data": []})()
 
     all_commits = commits.data or []
     fix_commits = []
-    surrounding = []
     for c in all_commits:
         msg = (c.get("message") or "").lower()
         if "fix" in msg or "bug" in msg:
             fix_commits.append(c)
-            surrounding.append(c)
-        elif len(surrounding) < 10:
-            surrounding.append(c)
 
     if not fix_commits:
         return BugOriginResponse(
@@ -355,56 +354,39 @@ def get_bug_origin(repo_id: UUID, body: BugOriginRequest, supabase=Depends(get_d
             ai_explanation="No fix commits found for this file.",
         )
 
-    prompt_context = {
-        "repo": {"full_name": repo_name},
-        "file_path": file_path,
-        "fix_commits": [
-            {
-                "sha": c.get("commit_sha", ""),
-                "author_name": c.get("author", "unknown"),
-                "message": c.get("message", ""),
-                "timestamp": c.get("commit_date", ""),
-                "files_changed": 1,
-                "additions": 0,
-                "deletions": 0,
-            }
-            for c in fix_commits[:10]
-        ],
-        "surrounding_commits": [
-            {
-                "sha": c.get("commit_sha", ""),
-                "author_name": c.get("author", "unknown"),
-                "message": c.get("message", ""),
-                "timestamp": c.get("commit_date", ""),
-            }
-            for c in surrounding[:10]
-        ],
-        "edges": [],
-    }
+    if _jinja is not None and _openai_configured():
+        try:
+            template = _jinja.get_template("bug_origin.j2")
+            user_prompt = template.render(
+                repo={"full_name": repo_name},
+                file_path=file_path,
+                fix_commits=[
+                    {
+                        "sha": c.get("commit_sha", ""),
+                        "author_name": c.get("author", "unknown"),
+                        "message": c.get("message", ""),
+                        "timestamp": str(c.get("commit_date", "")),
+                        "files_changed": 1,
+                        "additions": 0,
+                        "deletions": 0,
+                    }
+                    for c in fix_commits[:10]
+                ],
+                surrounding_commits=[],
+                edges=[],
+            )
+            messages = _build_messages("You trace bugs to their origin commit.", user_prompt)
+            answer = _call_openai(messages, max_tokens=1500)
+            sha = _extract_sha(answer.split("\n")[0] if answer else "") or fix_commits[0].get("commit_sha")
+            return BugOriginResponse(file_path=file_path, culprit_commit_sha=sha, ai_explanation=answer)
+        except Exception as e:
+            logger.warning("OpenAI/jinja2 for bug_origin failed: %s", e)
 
-    try:
-        template = _jinja.get_template("bug_origin.j2")
-        user_prompt = template.render(**prompt_context)
-    except Exception:
-        user_prompt = (
-            f"Analyze recent fix commits in {repo_name} related to {file_path}. "
-            "Identify the most likely commit that introduced the bug."
-        )
-
-    system = "You trace bugs to their origin commit. Always start with the commit SHA."
-    messages = _build_messages(system, user_prompt)
-
-    try:
-        answer = _call_openai(messages, max_tokens=1500)
-    except HTTPException:
-        return BugOriginResponse(
-            file_path=file_path,
-            culprit_commit_sha=fix_commits[0].get("commit_sha"),
-            ai_explanation=f"Most recent fix commit: {fix_commits[0].get('message', '')[:100]}",
-        )
-
-    sha = _extract_sha(answer.split("\n")[0] if answer else "") or fix_commits[0].get("commit_sha")
-    return BugOriginResponse(file_path=file_path, culprit_commit_sha=sha, ai_explanation=answer)
+    return BugOriginResponse(
+        file_path=file_path,
+        culprit_commit_sha=fix_commits[0].get("commit_sha"),
+        ai_explanation=f"Most recent fix commit: {fix_commits[0].get('message', '')[:200]}",
+    )
 
 
 # ── Refactor Plan ────────────────────────────────────────────────────────
@@ -419,18 +401,20 @@ def get_refactor_plan(repo_id: UUID, body: RefactorPlanRequest, supabase=Depends
         r = repo.data[0]
         repo_name = f"{r.get('owner','unknown')}/{r.get('name','unknown')}"
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=body.since_days)
-    cutoff_str = cutoff.isoformat()
-
-    commits = (
-        supabase.table("commits")
-        .select("commit_sha, author, message, commit_date")
-        .eq("repository_id", repo_id_str)
-        .gte("commit_date", cutoff_str)
-        .order("commit_date", desc=True)
-        .limit(30)
-        .execute()
-    )
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=body.since_days)
+        cutoff_str = cutoff.isoformat()
+        commits = (
+            supabase.table("commits")
+            .select("commit_sha, author, message, commit_date")
+            .eq("repository_id", repo_id_str)
+            .order("commit_date", desc=True)
+            .limit(30)
+            .execute()
+        )
+    except Exception as e:
+        logger.warning("commits query for refactor_plan failed: %s", e)
+        return RefactorPlanResponse(plan="Unable to fetch commit data.")
 
     refactor_commits = []
     for c in (commits.data or []):
@@ -441,37 +425,40 @@ def get_refactor_plan(repo_id: UUID, body: RefactorPlanRequest, supabase=Depends
             break
 
     if not refactor_commits:
-        recent = (commits.data or [])[:10]
-        refactor_commits = recent
+        refactor_commits = (commits.data or [])[:10]
 
-    prompt_context = {
-        "repo": {"full_name": repo_name},
-        "refactor_commits": [
-            {
-                "sha": c.get("commit_sha", ""),
-                "author_name": c.get("author", "unknown"),
-                "message": c.get("message", ""),
-                "timestamp": c.get("commit_date", ""),
-                "files_changed": 1,
-                "additions": 0,
-                "deletions": 0,
-            }
-            for c in refactor_commits[:10]
-        ],
-    }
+    if not refactor_commits:
+        return RefactorPlanResponse(plan="No recent commits found for analysis.")
 
-    try:
-        template = _jinja.get_template("refactor_plan.j2")
-        user_prompt = template.render(**prompt_context)
-    except Exception:
-        user_prompt = f"Create a refactoring plan for {repo_name} based on recent commit history."
+    if _jinja is not None and _openai_configured():
+        try:
+            template = _jinja.get_template("refactor_plan.j2")
+            user_prompt = template.render(
+                repo={"full_name": repo_name},
+                refactor_commits=[
+                    {
+                        "sha": c.get("commit_sha", ""),
+                        "author_name": c.get("author", "unknown"),
+                        "message": c.get("message", ""),
+                        "timestamp": str(c.get("commit_date", "")),
+                        "files_changed": 1,
+                        "additions": 0,
+                        "deletions": 0,
+                    }
+                    for c in refactor_commits[:10]
+                ],
+            )
+            messages = _build_messages("You are a refactoring expert.", user_prompt)
+            answer = _call_openai(messages, max_tokens=2000)
+            return RefactorPlanResponse(plan=answer)
+        except Exception as e:
+            logger.warning("OpenAI/jinja2 for refactor_plan failed: %s", e)
 
-    system = "You are a refactoring expert. Provide numbered steps with file paths and effort estimates."
-    messages = _build_messages(system, user_prompt)
-
-    try:
-        answer = _call_openai(messages, max_tokens=2000)
-    except HTTPException:
-        return RefactorPlanResponse(plan="AI service unavailable. Try again later.")
-
-    return RefactorPlanResponse(plan=answer)
+    commits_summary = "\n".join(
+        f"- {c.get('commit_sha', '')[:7]} {c.get('message', '')[:80]}"
+        for c in refactor_commits[:10]
+    )
+    return RefactorPlanResponse(
+        plan=f"Based on recent commits in {repo_name}:\n\n{commits_summary}\n\n"
+             "AI-powered analysis unavailable. Review these commits manually for refactoring opportunities."
+    )
