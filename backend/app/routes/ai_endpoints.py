@@ -212,7 +212,7 @@ def get_impact(repo_id: UUID, body: ImpactRequest, supabase=Depends(get_db)):
 
     commits = (
         supabase.table("commits")
-        .select("sha, author, message, commit_date")
+        .select("commit_sha, author, message, commit_date")
         .eq("repository_id", repo_id_str)
         .order("commit_date", desc=True)
         .limit(5)
@@ -224,7 +224,7 @@ def get_impact(repo_id: UUID, body: ImpactRequest, supabase=Depends(get_db)):
         for c in commits.data:
             if target in (c.get("message") or ""):
                 recent.append({
-                    "sha": c.get("sha", ""),
+                    "sha": c.get("commit_sha", ""),
                     "author_name": c.get("author", "unknown"),
                     "message": (c.get("message") or "")[:100],
                 })
@@ -312,7 +312,7 @@ def get_bug_origin(repo_id: UUID, body: BugOriginRequest, supabase=Depends(get_d
 
     commits = (
         supabase.table("commits")
-        .select("sha, author, message, commit_date")
+        .select("commit_sha, author, message, commit_date")
         .eq("repository_id", repo_id_str)
         .order("commit_date", desc=True)
         .limit(50)
@@ -342,7 +342,7 @@ def get_bug_origin(repo_id: UUID, body: BugOriginRequest, supabase=Depends(get_d
         "file_path": file_path,
         "fix_commits": [
             {
-                "sha": c.get("sha", ""),
+                "sha": c.get("commit_sha", ""),
                 "author_name": c.get("author", "unknown"),
                 "message": c.get("message", ""),
                 "timestamp": c.get("commit_date", ""),
@@ -354,7 +354,7 @@ def get_bug_origin(repo_id: UUID, body: BugOriginRequest, supabase=Depends(get_d
         ],
         "surrounding_commits": [
             {
-                "sha": c.get("sha", ""),
+                "sha": c.get("commit_sha", ""),
                 "author_name": c.get("author", "unknown"),
                 "message": c.get("message", ""),
                 "timestamp": c.get("commit_date", ""),
@@ -381,11 +381,11 @@ def get_bug_origin(repo_id: UUID, body: BugOriginRequest, supabase=Depends(get_d
     except HTTPException:
         return BugOriginResponse(
             file_path=file_path,
-            culprit_commit_sha=fix_commits[0].get("sha"),
+            culprit_commit_sha=fix_commits[0].get("commit_sha"),
             ai_explanation=f"Most recent fix commit: {fix_commits[0].get('message', '')[:100]}",
         )
 
-    sha = _extract_sha(answer.split("\n")[0] if answer else "") or fix_commits[0].get("sha")
+    sha = _extract_sha(answer.split("\n")[0] if answer else "") or fix_commits[0].get("commit_sha")
     return BugOriginResponse(file_path=file_path, culprit_commit_sha=sha, ai_explanation=answer)
 
 
@@ -406,7 +406,7 @@ def get_refactor_plan(repo_id: UUID, body: RefactorPlanRequest, supabase=Depends
 
     commits = (
         supabase.table("commits")
-        .select("sha, author, message, commit_date")
+        .select("commit_sha, author, message, commit_date")
         .eq("repository_id", repo_id_str)
         .gte("commit_date", cutoff_str)
         .order("commit_date", desc=True)
@@ -430,7 +430,7 @@ def get_refactor_plan(repo_id: UUID, body: RefactorPlanRequest, supabase=Depends
         "repo": {"full_name": repo_name},
         "refactor_commits": [
             {
-                "sha": c.get("sha", ""),
+                "sha": c.get("commit_sha", ""),
                 "author_name": c.get("author", "unknown"),
                 "message": c.get("message", ""),
                 "timestamp": c.get("commit_date", ""),
