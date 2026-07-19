@@ -2,33 +2,10 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { CubeTransparentIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
-import FileHealthBadge from "./FileHealthBadge";
 
-interface GraphNode {
-  id: string;
-  label: string;
-  type: string;
-  path?: string;
-  language?: string;
-  complexity: number;
-  churn: number;
-  size: number;
-}
-
-interface GraphEdge {
-  source: string;
-  target: string;
-  type: string;
-  weight: number;
-  label?: string;
-}
-
-interface GraphSlice {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  total_nodes: number;
-  total_edges: number;
-}
+interface GraphNode { id: string; label: string; type: string; path?: string; language?: string; complexity: number; churn: number; size: number; }
+interface GraphEdge { source: string; target: string; type: string; weight: number; label?: string; }
+interface GraphSlice { nodes: GraphNode[]; edges: GraphEdge[]; total_nodes: number; total_edges: number; }
 
 export default function GraphPanel({ repoId }: { repoId: string }) {
   const [data, setData] = useState<GraphSlice | null>(null);
@@ -39,294 +16,136 @@ export default function GraphPanel({ repoId }: { repoId: string }) {
 
   const fetchGraph = async () => {
     try {
-      setLoading(true);
-      setError(null);
+      setLoading(true); setError(null);
       const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-      const url = `${API_URL}/repositories/${repoId}/graph?depth=${depth}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to load dependency graph");
+      const res = await fetch(`${API_URL}/repositories/${repoId}/graph?depth=${depth}`);
+      if (!res.ok) throw new Error("Failed to load graph");
       const json = await res.json();
       setData(json);
-      if (json.nodes.length > 0) {
-        setSelectedNode(json.nodes[0]);
-      }
-    } catch (err: any) {
-      const mockGraph: GraphSlice = {
-        nodes: [
-          { id: "file:1", label: "src/main.py", type: "file", language: "Python", complexity: 12, churn: 5, size: 1024 },
-          { id: "file:2", label: "src/auth/oauth.py", type: "file", language: "Python", complexity: 45, churn: 18, size: 2048 },
-          { id: "file:3", label: "src/auth/middleware.py", type: "file", language: "Python", complexity: 30, churn: 12, size: 1536 },
-          { id: "file:4", label: "src/services/billing.py", type: "file", language: "Python", complexity: 65, churn: 22, size: 4096 },
-        ],
-        edges: [
-          { source: "file:1", target: "file:2", type: "imports", weight: 1, label: "imports oauth" },
-          { source: "file:3", target: "file:2", type: "imports", weight: 2, label: "imports oauth" },
-          { source: "file:1", target: "file:4", type: "imports", weight: 1, label: "imports billing" },
-        ],
-        total_nodes: 4,
-        total_edges: 3,
-      };
-      setData(mockGraph);
-      if (mockGraph.nodes.length > 0) {
-        setSelectedNode(mockGraph.nodes[0]);
-      }
-    } finally {
-      setLoading(false);
-    }
+      if (json.nodes?.length > 0) setSelectedNode(json.nodes[0]);
+    } catch {
+      setError("Graph endpoint unavailable");
+    } finally { setLoading(false); }
   };
 
-  useEffect(() => {
-    fetchGraph();
-  }, [repoId, depth]);
+  useEffect(() => { fetchGraph(); }, [repoId, depth]);
 
-  // Position nodes mathematically in an SVG viewport (custom circle layout to look clean & ordered)
   const layout = useMemo(() => {
     if (!data) return { nodes: [], edges: [] };
-    const width = 800;
-    const height = 450;
-    const cx = width / 2;
-    const cy = height / 2;
-
-    const files = data.nodes.filter((n) => n.type === "file");
-    const functions = data.nodes.filter((n) => n.type === "function");
-
+    const W = 800, H = 450, cx = W / 2, cy = H / 2;
     const positions: Record<string, { x: number; y: number }> = {};
-
-    // Position files in an outer circle
     const fileRadius = 180;
-    files.forEach((file, index) => {
-      const angle = (index / files.length) * 2 * Math.PI;
-      positions[file.id] = {
-        x: cx + fileRadius * Math.cos(angle),
-        y: cy + fileRadius * Math.sin(angle),
-      };
+    data.nodes.filter(n => n.type !== "function").forEach((n, i) => {
+      const a = (i / Math.max(1, data.nodes.filter(x => x.type !== "function").length)) * 2 * Math.PI;
+      positions[n.id] = { x: cx + fileRadius * Math.cos(a), y: cy + fileRadius * Math.sin(a) };
     });
-
-    // Position functions in an inner circle relative to their parent file if possible, or scattered
-    const functionRadius = 90;
-    functions.forEach((fn, index) => {
-      // Find parent file containment edge
-      const containmentEdge = data.edges.find(
-        (e) => e.target === fn.id && e.type === "CONTAINS"
-      );
-      if (containmentEdge && positions[containmentEdge.source]) {
-        const parentPos = positions[containmentEdge.source];
-        // Pull function nodes slightly inward from their parent file nodes
-        const dx = cx - parentPos.x;
-        const dy = cy - parentPos.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        positions[fn.id] = {
-          x: parentPos.x + (dx / dist) * 55 + (Math.random() - 0.5) * 15,
-          y: parentPos.y + (dy / dist) * 55 + (Math.random() - 0.5) * 15,
-        };
-      } else {
-        const angle = (index / functions.length) * 2 * Math.PI;
-        positions[fn.id] = {
-          x: cx + functionRadius * Math.cos(angle),
-          y: cy + functionRadius * Math.sin(angle),
-        };
-      }
+    const fnRadius = 90;
+    data.nodes.filter(n => n.type === "function").forEach((n, i) => {
+      const a = (i / Math.max(1, data.nodes.filter(x => x.type === "function").length)) * 2 * Math.PI;
+      positions[n.id] = { x: cx + fnRadius * Math.cos(a), y: cy + fnRadius * Math.sin(a) };
     });
-
-    const renderedNodes = data.nodes.map((node) => ({
-      ...node,
-      x: positions[node.id]?.x || cx + (Math.random() - 0.5) * 100,
-      y: positions[node.id]?.y || cy + (Math.random() - 0.5) * 100,
-    }));
-
-    const renderedEdges = data.edges
-      .map((edge) => {
-        const start = positions[edge.source];
-        const end = positions[edge.target];
-        if (!start || !end) return null;
-        return {
-          ...edge,
-          x1: start.x,
-          y1: start.y,
-          x2: end.x,
-          y2: end.y,
-        };
-      })
-      .filter((e) => e !== null) as Array<GraphEdge & { x1: number; y1: number; x2: number; y2: number }>;
-
+    const renderedNodes = data.nodes.map(n => ({ ...n, x: positions[n.id]?.x || cx, y: positions[n.id]?.y || cy }));
+    const renderedEdges = data.edges.map(e => {
+      const s = positions[e.source], t = positions[e.target];
+      if (!s || !t) return null;
+      return { ...e, x1: s.x, y1: s.y, x2: t.x, y2: t.y };
+    }).filter(Boolean) as any[];
     return { nodes: renderedNodes, edges: renderedEdges };
   }, [data]);
 
+  if (loading) return <div className="flex items-center justify-center h-64 text-white/20 font-mono text-xs tracking-widest">TRAVERSING DEPENDENCIES...</div>;
+  if (error) return <div className="flex flex-col items-center justify-center h-64 gap-2 text-red-400/60 font-mono text-xs"><span>{error}</span><button onClick={fetchGraph} className="text-white/40 hover:text-white/70 underline">RETRY</button></div>;
+
   return (
-    <div className="graph-panel-wrapper">
-      <div className="panel-header-controls">
-        <div className="title">
-          <CubeTransparentIcon className="w-5 h-5 text-sky-400" />
-          <span>Interactive Code Graph</span>
+    <div className="space-y-4">
+      {/* Controls */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-[11px] text-white/30 font-mono tracking-widest">
+          <CubeTransparentIcon className="w-3.5 h-3.5 text-emerald-400/60" />
+          {data?.total_nodes || 0} NODES · {data?.total_edges || 0} EDGES
         </div>
-        <div className="controls">
-          <div className="depth-selector">
-            <span className="label">Traversal Depth:</span>
-            {[1, 2, 3].map((d) => (
-              <button
-                key={d}
-                onClick={() => setDepth(d)}
-                className={`btn-toggle-small ${depth === d ? "active" : ""}`}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-          <button onClick={fetchGraph} className="btn-refresh" title="Reload graph">
-            <ArrowPathIcon className="w-4 h-4" />
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-white/20 font-mono tracking-widest">DEPTH</span>
+          {[1, 2, 3].map(d => (
+            <button key={d} onClick={() => setDepth(d)}
+              className={`w-7 h-6 text-[10px] font-mono rounded border transition-all ${
+                depth === d ? "border-emerald-400/40 text-emerald-400 bg-emerald-400/[0.04]" : "border-white/[0.06] text-white/30 hover:border-white/20"
+              }`}>{d}</button>
+          ))}
+          <button onClick={fetchGraph} className="ml-2 p-1.5 rounded border border-white/[0.06] text-white/30 hover:text-white/60 hover:border-white/20 transition-all">
+            <ArrowPathIcon className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {loading ? (
-        <div className="panel-loader">
-          <div className="spinner" />
-          <span>Traversing files & dependencies...</span>
+      {/* Graph + Inspector */}
+      <div className="flex gap-4">
+        <div className="flex-1 rounded-lg border border-white/[0.06] bg-white/[0.01] overflow-hidden">
+          <svg viewBox="0 0 800 450" className="w-full h-auto">
+            <defs>
+              <marker id="arrowhead" viewBox="0 0 10 10" refX="18" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#1e293b" />
+              </marker>
+            </defs>
+            {layout.edges.map((e: any, i: number) => {
+              const isActive = selectedNode && (e.source === selectedNode.id || e.target === selectedNode.id);
+              return (
+                <line key={i} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
+                  stroke={isActive ? "#10b981" : "#1e293b"}
+                  strokeWidth={isActive ? 1.5 : 0.5}
+                  markerEnd="url(#arrowhead)"
+                  strokeDasharray={e.type === "CONTAINS" ? "3,3" : undefined}
+                />
+              );
+            })}
+            {layout.nodes.map((n: any) => {
+              const isActive = selectedNode?.id === n.id;
+              const r = n.type === "file" ? 6 + Math.min(8, n.size > 0 ? Math.log2(n.size / 100) : 0) : 5;
+              const fill = isActive ? "#10b981" : n.type === "file" ? "#334155" : "#1e293b";
+              return (
+                <g key={n.id} onClick={() => setSelectedNode(n)} className="cursor-pointer">
+                  <circle cx={n.x} cy={n.y} r={r} fill={fill} stroke={isActive ? "#34d399" : "#0f172a"} strokeWidth={0.5} />
+                  <text x={n.x} y={n.y - r - 4} textAnchor="middle" fill={isActive ? "#6ee7b7" : "#475569"} fontSize="8" fontFamily="mono" style={{ userSelect: "none" }}>
+                    {n.label?.length > 20 ? n.label.slice(0, 20) + "…" : n.label}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
         </div>
-      ) : error ? (
-        <div className="panel-error">
-          <p>{error}</p>
-          <button onClick={fetchGraph} className="primary-button btn-retry">
-            Retry Connection
-          </button>
-        </div>
-      ) : (
-        <div className="graph-workspace-grid">
-          {/* SVG Dependency Visualizer */}
-          <div className="graph-canvas-container">
-            <svg viewBox="0 0 800 450" className="dependency-svg-canvas">
-              <defs>
-                <marker
-                  id="arrow"
-                  viewBox="0 0 10 10"
-                  refX="18"
-                  refY="5"
-                  markerWidth="6"
-                  markerHeight="6"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M0,0 L10,5 L0,10 z" fill="#4b5d7d" />
-                </marker>
-                <filter id="glow-file" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="3" result="blur" />
-                  <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                </filter>
-              </defs>
 
-              {/* Draw Edges */}
-              {layout.edges.map((edge, index) => {
-                const isSelected =
-                  selectedNode &&
-                  (edge.source === selectedNode.id || edge.target === selectedNode.id);
-                return (
-                  <line
-                    key={`${edge.source}-${edge.target}-${index}`}
-                    x1={edge.x1}
-                    y1={edge.y1}
-                    x2={edge.x2}
-                    y2={edge.y2}
-                    className={`graph-edge-path ${
-                      edge.type === "CONTAINS" ? "contains-path" : ""
-                    } ${isSelected ? "highlighted-edge" : ""}`}
-                    markerEnd={edge.type !== "CONTAINS" ? "url(#arrow)" : undefined}
-                    strokeDasharray={edge.type === "CONTAINS" ? "3,3" : undefined}
-                  />
-                );
-              })}
-
-              {/* Draw Nodes */}
-              {layout.nodes.map((node) => {
-                const isSelected = selectedNode?.id === node.id;
-                const color = node.type === "file" ? "#0ea5e9" : "#a855f7"; // cyan for files, purple for functions
-                return (
-                  <g
-                    key={node.id}
-                    transform={`translate(${node.x},${node.y})`}
-                    className="graph-node-group"
-                    onClick={() => setSelectedNode(node)}
-                  >
-                    <circle
-                      r={node.type === "file" ? 8 + Math.min(12, node.size > 0 ? Math.log2(node.size) : 0) : 6}
-                      fill={color}
-                      className={`graph-node-circle ${isSelected ? "selected" : ""}`}
-                      filter={isSelected ? "url(#glow-file)" : undefined}
-                    />
-                    <text
-                      y={node.type === "file" ? -15 : 12}
-                      className={`graph-node-text ${isSelected ? "selected-text" : ""}`}
-                    >
-                      {node.label}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-
-          {/* Sidebar Inspector */}
-          {selectedNode && (
-            <div className="graph-inspector-panel">
-              <div className="inspector-header">
-                <span className="small-caps">{selectedNode.type.toUpperCase()}</span>
-                <h2>{selectedNode.label}</h2>
-                {selectedNode.type === "file" && selectedNode.path && (
-                  <div className="mt-2">
-                    <FileHealthBadge repoId={repoId} path={selectedNode.path} showLabel={true} />
-                  </div>
-                )}
-              </div>
-              <div className="inspector-metrics">
-                <div className="metric-box">
-                  <span className="label">Complexity</span>
-                  <span className="value">{selectedNode.complexity}</span>
-                </div>
-                {selectedNode.type === "file" && (
-                  <div className="metric-box">
-                    <span className="label">Git Churn</span>
-                    <span className="value">{selectedNode.churn} edits</span>
-                  </div>
-                )}
-              </div>
-              {selectedNode.path && (
-                <div className="inspector-row">
-                  <span className="label">Path</span>
-                  <span className="value code-text">{selectedNode.path}</span>
-                </div>
-              )}
-              {selectedNode.language && (
-                <div className="inspector-row">
-                  <span className="label">Language</span>
-                  <span className="value">{selectedNode.language}</span>
-                </div>
-              )}
-              <div className="inspector-relationships">
-                <h3>Connections</h3>
-                <div className="relationship-list">
-                  {layout.edges
-                    .filter((e) => e.source === selectedNode.id || e.target === selectedNode.id)
-                    .map((edge, idx) => {
-                      const otherNodeId =
-                        edge.source === selectedNode.id ? edge.target : edge.source;
-                      const otherNodeName =
-                        layout.nodes.find((n) => n.id === otherNodeId)?.label || otherNodeId;
-                      const isIncoming = edge.target === selectedNode.id;
-
-                      return (
-                        <div key={idx} className="relationship-item">
-                          <span className="badge-relationship">{edge.type}</span>
-                          <span>
-                            {isIncoming ? "← from" : "→ to"}{" "}
-                            <strong>{otherNodeName}</strong>
-                          </span>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
+        {selectedNode && (
+          <div className="w-56 flex-shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.01] p-4 space-y-3 text-[11px]">
+            <div>
+              <div className="text-[9px] text-white/20 font-mono tracking-widest">{selectedNode.type?.toUpperCase()}</div>
+              <div className="text-xs text-white/80 mt-0.5 font-medium truncate">{selectedNode.label}</div>
             </div>
-          )}
-        </div>
-      )}
+            {selectedNode.path && (
+              <div className="text-[10px] text-white/30 font-mono truncate border-t border-white/[0.04] pt-2">
+                {selectedNode.path}
+              </div>
+            )}
+            <div className="flex gap-3 pt-1">
+              <div><div className="text-[9px] text-white/20 font-mono">COMPLEXITY</div><div className="text-xs text-white/60">{selectedNode.complexity || 0}</div></div>
+              {selectedNode.type !== "function" && <div><div className="text-[9px] text-white/20 font-mono">CHURN</div><div className="text-xs text-white/60">{selectedNode.churn || 0}</div></div>}
+            </div>
+            {layout.edges.filter((e: any) => e.source === selectedNode.id || e.target === selectedNode.id).length > 0 && (
+              <div className="border-t border-white/[0.04] pt-2">
+                <div className="text-[9px] text-white/20 font-mono tracking-widest mb-1">CONNECTIONS</div>
+                {layout.edges.filter((e: any) => e.source === selectedNode.id || e.target === selectedNode.id).slice(0, 8).map((e: any, i: number) => {
+                  const other = e.source === selectedNode.id ? e.target : e.source;
+                  const name = layout.nodes.find((n: any) => n.id === other)?.label || other;
+                  return (
+                    <div key={i} className="text-[10px] text-white/40 font-mono truncate">
+                      {e.source === selectedNode.id ? "→" : "←"} {name.slice(0, 20)}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

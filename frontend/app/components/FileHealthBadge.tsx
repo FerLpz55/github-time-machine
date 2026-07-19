@@ -2,54 +2,42 @@
 
 import { useEffect, useState } from "react";
 
-export interface FileHealthScore {
+interface FileHealthScore {
   file_path: string;
   complexity_score: number;
   churn_score: number;
   debt_score: number;
-  health_status: "good" | "moderate" | "poor";
+  health_status: string;
 }
 
-export default function FileHealthBadge({ repoId, path, showLabel = false }: { repoId: string; path: string; showLabel?: boolean }) {
-  const [health, setHealth] = useState<FileHealthScore | null>(null);
+export default function FileHealthBadge({ repoId, path, showLabel }: { repoId: string; path: string; showLabel?: boolean }) {
+  const [score, setScore] = useState<FileHealthScore | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    let mounted = true;
     if (!path) return;
-    
-    const fetchHealth = async () => {
+    (async () => {
       setLoading(true);
       try {
         const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-        const url = `${API_URL}/repositories/${repoId}/file_health?path=${encodeURIComponent(path)}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Failed to load health");
-        const json = await res.json();
-        if (mounted) setHealth(json);
-      } catch (err) {
-        console.error("Health badge error:", err);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-    
-    fetchHealth();
-    return () => { mounted = false; };
+        const res = await fetch(`${API_URL}/repositories/${repoId}/file_health?path=${encodeURIComponent(path)}`);
+        if (res.ok) setScore(await res.json());
+      } catch { /* ignore */ }
+      finally { setLoading(false); }
+    })();
   }, [repoId, path]);
 
-  if (loading || !health) return <div className="h-4 w-4 rounded-full bg-slate-700 animate-pulse inline-block" />;
+  if (loading) return <span className="text-[9px] text-white/10 font-mono">···</span>;
+  if (!score) return null;
 
-  const colors = {
-    good: "bg-emerald-500",
-    moderate: "bg-amber-500",
-    poor: "bg-rose-500"
-  };
+  const color = score.health_status === "poor" ? "text-red-400/60" : score.health_status === "moderate" ? "text-amber-400/50" : "text-emerald-400/50";
+  const bg = score.health_status === "poor" ? "bg-red-400/10 border-red-400/20" : score.health_status === "moderate" ? "bg-amber-400/10 border-amber-400/20" : "bg-emerald-400/10 border-emerald-400/20";
 
   return (
-    <div className="inline-flex items-center gap-1.5" title={`Complexity: ${(health.complexity_score*100).toFixed(0)}%, Churn: ${(health.churn_score*100).toFixed(0)}%, Debt: ${(health.debt_score*100).toFixed(0)}%`}>
-      <div className={`h-3 w-3 rounded-full ${colors[health.health_status] || "bg-slate-500"} shadow-sm`} />
-      {showLabel && <span className="text-xs text-slate-300 font-medium capitalize">{health.health_status} Health</span>}
-    </div>
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] font-mono ${bg} ${color}`}>
+      {showLabel && <span>HEALTH</span>}
+      <span>{score.health_status.toUpperCase()}</span>
+      {showLabel && <span>{(score.debt_score * 100).toFixed(0)}%</span>}
+    </span>
   );
 }

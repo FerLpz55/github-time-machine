@@ -1,345 +1,98 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ShieldCheckIcon, PlayIcon, ExclamationCircleIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
+import { useState } from "react";
+import { ShieldCheckIcon } from "@heroicons/react/24/outline";
 
-interface AffectedFile {
-  path: string;
-  relationship: string;
-  risk_level: string;
-  reason: string;
-}
-
-interface ImpactResult {
-  target: string;
-  change_type: string;
-  risk_score: number;
-  affected_files: AffectedFile[];
-  suggested_tests: string[];
-  ai_explanation: string;
-  total_affected: number;
-}
-
-interface BugOriginResult {
-  file_path: string;
-  culprit_commit_sha: string | null;
-  ai_explanation: string;
-}
+interface AffectedFile { path: string; relationship: string; risk_level: string; reason: string; }
+interface ImpactResult { target: string; change_type: string; risk_score: number; affected_files: AffectedFile[]; suggested_tests: string[]; }
 
 export default function ImpactPanel({ repoId }: { repoId: string }) {
-  const [fileList, setFileList] = useState<string[]>([]);
-  const [selectedFile, setSelectedFile] = useState("");
+  const [target, setTarget] = useState("");
   const [changeType, setChangeType] = useState("modify");
-  const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImpactResult | null>(null);
-  const [bugOriginResult, setBugOriginResult] = useState<BugOriginResult | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Populate dropdown list with files from graph or files route
-  useEffect(() => {
-    async function loadFiles() {
-      try {
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-        const res = await fetch(`${API_URL}/repositories/${repoId}/graph`);
-        if (res.ok) {
-          const json = await res.json();
-          const files = json.nodes
-            .filter((n: any) => n.type === "file")
-            .map((n: any) => n.path || n.label);
-          setFileList(files);
-          if (files.length > 0) {
-            setSelectedFile(files[0]);
-          }
-        }
-      } catch (err) {
-        // Fallback to static mock files list if server is not running
-        setFileList([
-          "src/auth/oauth.py",
-          "src/auth/middleware.py",
-          "src/services/billing_service.py",
-          "src/models/billing.py",
-          "src/api/routes.py",
-          "src/main.py",
-        ]);
-        setSelectedFile("src/auth/oauth.py");
-      }
-    }
-    loadFiles();
-  }, [repoId]);
-
-  const runSimulation = async () => {
-    if (!selectedFile) return;
+  const runImpact = async () => {
+    if (!target.trim() || loading) return;
+    setLoading(true); setError(null); setResult(null);
     try {
-      setLoading(true);
-      setError(null);
-      setResult(null);
-      setBugOriginResult(null);
-
       const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
       const res = await fetch(`${API_URL}/repositories/${repoId}/impact`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          target: selectedFile,
-          change_type: changeType,
-          description: `Simulated architectural alteration of ${selectedFile} module.`,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: target.trim(), change_type: changeType }),
       });
-
-      if (!res.ok) throw new Error("Impact simulation failed");
-      const json = await res.json();
-      setResult(json);
-    } catch (err: any) {
-      setError(err.message || "Failed to simulate change");
-    } finally {
-      setLoading(false);
-    }
+      if (!res.ok) throw new Error("Impact analysis failed");
+      setResult(await res.json());
+    } catch (e: any) { setError(e.message || "Error"); }
+    finally { setLoading(false); }
   };
 
-  const runBugOrigin = async () => {
-    if (!selectedFile) return;
-    try {
-      setLoading(true);
-      setError(null);
-      setResult(null);
-      setBugOriginResult(null);
-
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${API_URL}/repositories/${repoId}/bug_origin`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_path: selectedFile }),
-      });
-
-      if (!res.ok) throw new Error("Bug origin analysis failed");
-      const json = await res.json();
-      setBugOriginResult(json);
-    } catch (err: any) {
-      setError(err.message || "Failed to analyze bug origin");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getRiskLabel = (score: number) => {
-    if (score >= 0.75) return { text: "CRITICAL", color: "text-red-500", border: "border-red-500" };
-    if (score >= 0.4) return { text: "MEDIUM", color: "text-amber-500", border: "border-amber-500" };
-    return { text: "LOW", color: "text-emerald-500", border: "border-emerald-500" };
-  };
+  const riskColor = (result?.risk_score || 0) > 0.66 ? "text-red-400" : (result?.risk_score || 0) > 0.33 ? "text-amber-400" : "text-emerald-400";
 
   return (
-    <div className="impact-panel-wrapper">
-      <div className="panel-header-controls">
-        <div className="title">
-          <ShieldCheckIcon className="w-5 h-5 text-emerald-400" />
-          <span>Change Impact Simulator</span>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 text-[11px] text-white/30 font-mono tracking-widest">
+        <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-400/60" />
+        CHANGE IMPACT SIMULATOR
       </div>
 
-      {/* Inputs Form Row */}
-      <div className="impact-form-card">
-        <div className="form-grid">
-          <div className="form-group">
-            <label className="label">Target Module / File</label>
-            <select
-              value={selectedFile}
-              onChange={(e) => setSelectedFile(e.target.value)}
-              className="select-field"
-            >
-              {fileList.map((file) => (
-                <option key={file} value={file}>
-                  {file}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label className="label">Simulation Change Type</label>
-            <div className="radio-tabs">
-              {(["modify", "remove", "refactor"] as const).map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setChangeType(type)}
-                  className={`btn-radio-tab ${changeType === type ? "active" : ""}`}
-                >
-                  {type.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex gap-4">
-          <button
-            onClick={runSimulation}
-            disabled={loading || !selectedFile}
-            className="primary-button btn-run-impact flex-1"
-          >
-            {loading ? (
-              <>
-                <div className="spinner-small" />
-                <span>Working...</span>
-              </>
-            ) : (
-              <>
-                <PlayIcon className="w-4 h-4" />
-                <span>Simulate Change Impact</span>
-              </>
-            )}
-          </button>
-          
-          <button
-            onClick={runBugOrigin}
-            disabled={loading || !selectedFile}
-            className="flex items-center justify-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-700 text-white rounded text-sm font-medium transition-colors flex-1"
-          >
-            {loading ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                <span>Tracing...</span>
-              </>
-            ) : (
-              <>
-                <MagnifyingGlassIcon className="w-4 h-4" />
-                <span>Trace Bug Origin</span>
-              </>
-            )}
-          </button>
-        </div>
+      {/* Input */}
+      <div className="flex gap-2">
+        <input type="text" value={target} onChange={e => setTarget(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && runImpact()}
+          placeholder="File path (e.g. src/auth.py)..."
+          className="flex-1 bg-white/[0.02] border border-white/[0.06] rounded-md px-4 py-2 text-xs text-white/70 font-mono placeholder-white/15 focus:outline-none focus:border-emerald-400/30 transition-colors"
+        />
+        <select value={changeType} onChange={e => setChangeType(e.target.value)}
+          className="bg-white/[0.02] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-white/50 font-mono focus:outline-none focus:border-emerald-400/30">
+          <option value="modify">MODIFY</option>
+          <option value="remove">REMOVE</option>
+          <option value="refactor">REFACTOR</option>
+        </select>
+        <button onClick={runImpact} disabled={loading || !target.trim()}
+          className="px-4 py-2 rounded-md border border-emerald-400/20 bg-emerald-400/[0.06] text-[10px] text-emerald-400/80 font-mono tracking-wider hover:bg-emerald-400/[0.12] disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+          ANALYZE
+        </button>
       </div>
 
-      {/* Simulator Response Details */}
-      {error && (
-        <div className="panel-error mt-4">
-          <p>{error}</p>
-        </div>
-      )}
+      {loading && <div className="text-center py-8 text-white/20 font-mono text-xs tracking-widest">SIMULATING IMPACT...</div>}
+      {error && <div className="text-center text-[10px] text-red-400/60 font-mono">{error}</div>}
 
       {result && (
-        <div className="impact-results-layout">
-          {/* Column Left: Blast Radius List & Risk Score */}
-          <div className="results-column-left">
-            <div className="risk-score-card">
-              <h3>Blast Radius Risk</h3>
-              <div className="flex items-center gap-4 mt-2">
-                <span className="text-4xl font-bold font-mono">
-                  {(result.risk_score * 100).toFixed(0)}%
-                </span>
-                <div
-                  className={`badge-risk ${
-                    getRiskLabel(result.risk_score).color
-                  }`}
-                >
-                  {getRiskLabel(result.risk_score).text}
-                </div>
-              </div>
-            </div>
-
-            <div className="blast-radius-card">
-              <h3>Affected Files ({result.total_affected})</h3>
-              <div className="affected-list">
-                {result.affected_files.length === 0 ? (
-                  <p className="empty-text">No downstream files directly call this module.</p>
-                ) : (
-                  result.affected_files.map((file, idx) => (
-                    <div key={idx} className="affected-item">
-                      <div className="item-meta">
-                        <span className="path">{file.path}</span>
-                        <span className="badge-rel">{file.relationship}</span>
-                      </div>
-                      <p className="reason">{file.reason}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {result.suggested_tests.length > 0 && (
-              <div className="suggested-tests-card">
-                <h3>Suggested Verification Tests</h3>
-                <div className="tests-list">
-                  {result.suggested_tests.map((test, idx) => (
-                    <div key={idx} className="test-item">
-                      <ExclamationCircleIcon className="w-4 h-4 text-sky-400" />
-                      <span>{test}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Column Right: AI Architectural Explanation */}
-          <div className="results-column-right">
-            <div className="ai-narrative-card">
-              <h3>AI Architectural Analysis</h3>
-              <div className="ai-rich-text markdown-render">
-                {result.ai_explanation.split("\n").map((line, idx) => {
-                  if (line.startsWith("###")) {
-                    return <h4 key={idx} className="md-h4">{line.replace("###", "")}</h4>;
-                  }
-                  if (line.startsWith("####")) {
-                    return <h5 key={idx} className="md-h5">{line.replace("####", "")}</h5>;
-                  }
-                  if (line.startsWith("-") || line.startsWith("*")) {
-                    return <li key={idx} className="md-li">{line.substring(1)}</li>;
-                  }
-                  if (line.trim() === "") {
-                    return <div key={idx} className="h-2" />;
-                  }
-                  return <p key={idx} className="md-p">{line}</p>;
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {bugOriginResult && (
-        <div className="impact-results-layout mt-6">
-          <div className="results-column-left">
-            <div className="risk-score-card border-rose-500/30 bg-rose-500/5">
-              <h3 className="text-rose-400">Culprit Commit</h3>
-              <div className="flex flex-col mt-2">
-                {bugOriginResult.culprit_commit_sha ? (
-                  <span className="text-2xl font-bold font-mono text-slate-200">
-                    {bugOriginResult.culprit_commit_sha.substring(0, 7)}
-                  </span>
-                ) : (
-                  <span className="text-lg font-medium text-slate-400">
-                    Could not identify a single commit
-                  </span>
-                )}
-                <span className="text-sm text-slate-400 mt-1">
-                  Origin of bugs in <code className="text-slate-300">{bugOriginResult.file_path}</code>
-                </span>
-              </div>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 p-4 rounded-lg border border-white/[0.06] bg-white/[0.01]">
+            <div className={`text-2xl font-mono font-bold ${riskColor}`}>{(result.risk_score * 100).toFixed(0)}%</div>
+            <div>
+              <div className="text-xs text-white/70 font-mono">{result.target}</div>
+              <div className="text-[10px] text-white/30 font-mono tracking-wider">{result.change_type.toUpperCase()} · RISK SCORE</div>
             </div>
           </div>
 
-          <div className="results-column-right">
-            <div className="ai-narrative-card border-rose-500/20">
-              <h3 className="text-rose-400">Root Cause Analysis</h3>
-              <div className="ai-rich-text markdown-render">
-                {bugOriginResult.ai_explanation.split("\n").map((line, idx) => {
-                  if (line.startsWith("###")) {
-                    return <h4 key={idx} className="md-h4">{line.replace("###", "")}</h4>;
-                  }
-                  if (line.startsWith("####")) {
-                    return <h5 key={idx} className="md-h5">{line.replace("####", "")}</h5>;
-                  }
-                  if (line.startsWith("-") || line.startsWith("*")) {
-                    return <li key={idx} className="md-li">{line.substring(1)}</li>;
-                  }
-                  if (line.trim() === "") {
-                    return <div key={idx} className="h-2" />;
-                  }
-                  return <p key={idx} className="md-p">{line}</p>;
-                })}
+          {result.affected_files.length > 0 && (
+            <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] p-4">
+              <div className="text-[10px] text-white/20 font-mono tracking-widest mb-3">AFFECTED FILES</div>
+              <div className="space-y-1.5">
+                {result.affected_files.map((f, i) => (
+                  <div key={i} className="flex items-center justify-between text-[10px] font-mono">
+                    <span className="text-white/50 truncate">{f.path}</span>
+                    <span className={`ml-2 flex-shrink-0 ${f.risk_level === "high" ? "text-red-400/70" : f.risk_level === "medium" ? "text-amber-400/50" : "text-emerald-400/40"}`}>
+                      {f.risk_level.toUpperCase()}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
+          )}
+
+          {result.suggested_tests.length > 0 && (
+            <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] p-4">
+              <div className="text-[10px] text-white/20 font-mono tracking-widest mb-3">SUGGESTED TESTS</div>
+              {result.suggested_tests.map((t, i) => (
+                <div key={i} className="text-[10px] text-white/40 font-mono mb-1">· {t}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

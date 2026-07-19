@@ -1,294 +1,115 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { ChatBubbleLeftRightIcon, ArrowRightIcon, TrashIcon, SparklesIcon } from "@heroicons/react/24/outline";
+import { useEffect, useState } from "react";
+import { ChatBubbleLeftRightIcon } from "@heroicons/react/24/outline";
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
+interface Message { role: "user" | "assistant"; content: string; }
+interface ChatRecord { id: string; question: string; answer: string; created_at: string; }
 
 export default function ChatPanel({ repoId }: { repoId: string }) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content: "Hello! I am the **Architect's Memory**. Ask me anything about the history, evolution, or architectural dependencies of this codebase.",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [focusFile, setFocusFile] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Suggested questions based on repo
-  const suggestions = [
-    { text: "What is the history of BillingService?", file: "src/services/billing_service.py" },
-    { text: "Why did we split auth/oauth.py?", file: "src/auth/oauth.py" },
-    { text: "Are there any bug patterns in user.py?", file: "src/models/user.py" },
-  ];
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    (async () => {
+      try {
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${API_URL}/repositories/${repoId}/chat`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          const msgs: Message[] = [];
+          data.forEach((r: ChatRecord) => {
+            msgs.push({ role: "user", content: r.question });
+            msgs.push({ role: "assistant", content: r.answer });
+          });
+          setMessages(msgs);
+        }
+      } catch {}
+    })();
+  }, [repoId]);
 
-  const clearChat = () => {
-    setMessages([
-      {
-        role: "assistant",
-        content: "Hello! I am the **Architect's Memory**. Ask me anything about the history, evolution, or architectural dependencies of this codebase.",
-      },
-    ]);
-    setSessionId(null);
-    setFocusFile(null);
-  };
-
-  const handleSend = async (textToSend: string) => {
-    if (!textToSend.trim() || loading) return;
-
-    const userMessage: Message = { role: "user", content: textToSend };
-    setMessages((prev) => [...prev, userMessage]);
+  const sendMessage = async () => {
+    if (!input.trim() || loading) return;
+    const text = input.trim();
     setInput("");
     setLoading(true);
-
-    // Add placeholder assistant message for streaming
-    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+    setError(null);
+    setMessages(prev => [...prev, { role: "user", content: text }, { role: "assistant", content: "" }]);
 
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-      const response = await fetch(`${API_URL}/repositories/${repoId}/chat`, {
+      const res = await fetch(`${API_URL}/repositories/${repoId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          repository_id: repoId,
-          question: textToSend,
-          message: textToSend,
-          file_path: focusFile || undefined,
-          session_id: sessionId || undefined,
-          stream: true,
-        }),
+        body: JSON.stringify({ repository_id: repoId, question: text }),
       });
-
-      if (!response.ok) throw new Error("Chat request failed");
-
-      // Handle non-streaming JSON responses from real backend
-      const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        const data = await response.json();
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastIndex = updated.length - 1;
-          if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
-            updated[lastIndex] = {
-              role: "assistant",
-              content: data.answer || "",
-            };
-          }
-          return updated;
-        });
-        setLoading(false);
-        return;
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) throw new Error("Stream reader not supported");
-
-      let buffer = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Normalize carriage returns to standard newlines
-        const normalized = buffer.replace(/\r\n/g, "\n");
-        // SSE streams return blocks separated by double newlines
-        const lines = normalized.split("\n\n");
-        // Keep the last partial block in buffer
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          
-          const eventMatch = line.match(/^event:\s*(\w+)/m);
-          const dataMatch = line.match(/^data:\s*(.*)/m);
-
-          if (eventMatch && dataMatch) {
-            const event = eventMatch[1];
-            const dataStr = dataMatch[1].trim();
-
-            try {
-              const data = JSON.parse(dataStr);
-              if (event === "session") {
-                setSessionId(data.session_id);
-              } else if (event === "token") {
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const lastIndex = updated.length - 1;
-                  if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
-                    updated[lastIndex] = {
-                      ...updated[lastIndex],
-                      content: updated[lastIndex].content + data.token,
-                    };
-                  }
-                  return updated;
-                });
-              }
-            } catch (err) {
-              console.error("Failed to parse SSE line JSON:", err, "Line content:", line);
-            }
-          }
-        }
-      }
-    } catch (err: any) {
-      setMessages((prev) => {
+      if (!res.ok) throw new Error("Chat failed");
+      const data = await res.json();
+      setMessages(prev => {
         const updated = [...prev];
-        const lastIndex = updated.length - 1;
-        if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            content: `Error: ${err.message || "Failed to retrieve stream from AI server"}`,
-          };
-        }
+        updated[updated.length - 1] = { role: "assistant", content: data.answer || "No response" };
         return updated;
       });
-    } finally {
-      setLoading(false);
-      setMessages((prev) => {
+    } catch (e: any) {
+      setError(e.message || "Failed to connect");
+      setMessages(prev => {
         const updated = [...prev];
-        const lastIndex = updated.length - 1;
-        if (lastIndex >= 0 && updated[lastIndex].role === "assistant" && updated[lastIndex].content === "") {
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            content: "Error: Stream disconnected without sending any tokens. Please refresh and try again.",
-          };
-        }
+        updated[updated.length - 1] = { role: "assistant", content: "Error: AI service unavailable." };
         return updated;
       });
-    }
+    } finally { setLoading(false); }
   };
 
   return (
-    <div className="chat-panel-wrapper">
-      <div className="panel-header-controls">
-        <div className="title">
-          <ChatBubbleLeftRightIcon className="w-5 h-5 text-indigo-400" />
-          <span>Architect's Memory Chatbot</span>
-        </div>
-        <button onClick={clearChat} className="btn-refresh" title="Clear Chat">
-          <TrashIcon className="w-4 h-4" />
-        </button>
+    <div className="flex flex-col h-full max-h-[calc(100vh-140px)]">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-[80%] rounded-lg px-4 py-2.5 text-xs font-mono ${
+              msg.role === "user"
+                ? "bg-emerald-400/[0.08] border border-emerald-400/20 text-emerald-300/80"
+                : "bg-white/[0.02] border border-white/[0.04] text-white/60"
+            }`}>
+              {msg.content || (loading && i === messages.length - 1 ? (
+                <span className="inline-flex gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/60 animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/60 animate-pulse" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/60 animate-pulse" style={{ animationDelay: "300ms" }} />
+                </span>
+              ) : msg.content)}
+            </div>
+          </div>
+        ))}
+        {messages.length === 0 && !loading && (
+          <div className="flex flex-col items-center justify-center h-64 text-white/10 gap-2">
+            <ChatBubbleLeftRightIcon className="w-12 h-12" />
+            <span className="text-[10px] font-mono tracking-widest">ASK ABOUT THE CODEBASE</span>
+          </div>
+        )}
+        {error && <div className="text-center text-[10px] text-red-400/60 font-mono">{error}</div>}
       </div>
 
-      <div className="chat-workspace-grid">
-        {/* Messages Trail */}
-        <div className="chat-trail-area">
-          <div className="messages-scroller">
-            {messages.map((msg, index) => (
-              <div key={index} className={`message-bubble-row ${msg.role}`}>
-                <div className="avatar-icon">
-                  {msg.role === "assistant" ? "⌁" : "U"}
-                </div>
-                <div className="message-content">
-                  {msg.role === "assistant" ? (
-                    msg.content === "" ? (
-                      <div className="typing-indicator">
-                        <span /><span /><span />
-                      </div>
-                    ) : (
-                    <div className="ai-rich-text markdown-render">
-                      {msg.content.split("\n").map((line, idx) => {
-                        // Check #### before ### to avoid prefix collision
-                        if (line.startsWith("####")) {
-                          return <h5 key={idx} className="md-h5">{line.replace(/^####\s*/, "")}</h5>;
-                        }
-                        if (line.startsWith("###")) {
-                          return <h4 key={idx} className="md-h4">{line.replace(/^###\s*/, "")}</h4>;
-                        }
-                        if (line.startsWith("##")) {
-                          return <h3 key={idx} className="md-h3">{line.replace(/^##\s*/, "")}</h3>;
-                        }
-                        if (line.startsWith("**") && line.endsWith("**")) {
-                          return <strong key={idx} className="md-bold">{line.replace(/\*\*/g, "")}</strong>;
-                        }
-                        if (line.startsWith("- ") || line.startsWith("* ")) {
-                          return <li key={idx} className="md-li">{line.substring(2)}</li>;
-                        }
-                        if (line.trim() === "") {
-                          return <div key={idx} className="h-2" />;
-                        }
-                        return <p key={idx} className="md-p">{line}</p>;
-                      })}
-                    </div>
-                    )
-                  ) : (
-                    <p className="user-text">{msg.content}</p>
-                  )}
-                </div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input Control Box */}
-          <div className="chat-input-bar">
-            {focusFile && (
-              <div className="focus-file-badge">
-                <span>Focusing File: <strong>{focusFile}</strong></span>
-                <button onClick={() => setFocusFile(null)} className="btn-close">×</button>
-              </div>
-            )}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSend(input);
-              }}
-              className="input-row"
-            >
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about architectural choices, complexity modules..."
-                className="input-text-field"
-                disabled={loading}
-              />
-              <button type="submit" disabled={loading || !input.trim()} className="btn-submit">
-                <ArrowRightIcon className="w-5 h-5" />
-              </button>
-            </form>
-          </div>
-        </div>
-
-        {/* Focus Sidebar Suggestions */}
-        <div className="chat-suggestions-sidebar">
-          <h3>Architectural Suggestions</h3>
-          <p className="sidebar-desc">Select a query to investigate code history:</p>
-          <div className="suggestions-list">
-            {suggestions.map((sug, idx) => (
-              <button
-                key={idx}
-                onClick={() => {
-                  setFocusFile(sug.file);
-                  handleSend(sug.text);
-                }}
-                disabled={loading}
-                className="btn-suggestion-card"
-              >
-                <SparklesIcon className="w-4 h-4 text-purple-400" />
-                <div className="text-left">
-                  <span>{sug.text}</span>
-                  <span className="file-badge">{sug.file.split("/").pop()}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* Input */}
+      <div className="mt-4 flex gap-2">
+        <input
+          type="text"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && sendMessage()}
+          placeholder="Ask about this repository..."
+          className="flex-1 bg-white/[0.02] border border-white/[0.06] rounded-md px-4 py-2 text-xs text-white/70 font-mono placeholder-white/15 focus:outline-none focus:border-emerald-400/30 transition-colors"
+        />
+        <button
+          onClick={sendMessage}
+          disabled={loading || !input.trim()}
+          className="px-4 py-2 rounded-md border border-emerald-400/20 bg-emerald-400/[0.06] text-[10px] text-emerald-400/80 font-mono tracking-wider hover:bg-emerald-400/[0.12] hover:border-emerald-400/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+        >
+          SEND
+        </button>
       </div>
     </div>
   );
