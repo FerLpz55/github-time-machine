@@ -35,7 +35,7 @@ def _openai_configured() -> bool:
 
 # ── Health (diagnostic) ─────────────────────────────────────────────────
 
-@router.get("/_ai_health")
+@router.get("/ai-health")
 def ai_health(repo_id: UUID, supabase=Depends(get_db)):
     """Diagnostic endpoint — returns AI subsystem status."""
     commits_result = supabase.table("commits").select("commit_sha").eq("repository_id", str(repo_id)).limit(1).execute()
