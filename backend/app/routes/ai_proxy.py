@@ -7,7 +7,7 @@ from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 
-AI_SERVICE_URL = "http://skillful-growth.railway.internal"
+AI_SERVICE_URL = "http://skillful-growth.railway.internal:8080"
 
 router = APIRouter(prefix="/repositories/{repo_id}", tags=["ai_proxy"])
 
