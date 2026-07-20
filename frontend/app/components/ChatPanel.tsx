@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { ChatBubbleLeftRightIcon } from "@heroicons/react/24/outline";
 
 interface Message { role: "user" | "assistant"; content: string; }
@@ -10,6 +10,11 @@ export default function ChatPanel({ repoId }: { repoId: string }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://github-time-machine-production.up.railway.app";
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
@@ -20,7 +25,6 @@ export default function ChatPanel({ repoId }: { repoId: string }) {
     setMessages(prev => [...prev, { role: "user", content: text }, { role: "assistant", content: "" }]);
 
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
       const res = await fetch(`${API_URL}/repositories/${repoId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -30,7 +34,7 @@ export default function ChatPanel({ repoId }: { repoId: string }) {
       const data = await res.json();
       setMessages(prev => {
         const updated = [...prev];
-        updated[updated.length - 1] = { role: "assistant", content: data.answer || "No response" };
+        updated[updated.length - 1] = { role: "assistant", content: data.answer || "No response." };
         return updated;
       });
     } catch (e: any) {
@@ -45,7 +49,6 @@ export default function ChatPanel({ repoId }: { repoId: string }) {
 
   return (
     <div className="flex flex-col h-full max-h-[calc(100vh-140px)]">
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-3 pr-2">
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -71,9 +74,9 @@ export default function ChatPanel({ repoId }: { repoId: string }) {
           </div>
         )}
         {error && <div className="text-center text-[10px] text-red-400/60 font-mono">{error}</div>}
+        <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
       <div className="mt-4 flex gap-2">
         <input
           type="text"
@@ -86,7 +89,7 @@ export default function ChatPanel({ repoId }: { repoId: string }) {
         <button
           onClick={sendMessage}
           disabled={loading || !input.trim()}
-          className="px-4 py-2 rounded-md border border-emerald-400/20 bg-emerald-400/[0.06] text-[10px] text-emerald-400/80 font-mono tracking-wider hover:bg-emerald-400/[0.12] hover:border-emerald-400/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+          className="px-4 py-2 rounded-md border border-emerald-400/20 bg-emerald-400/[0.06] text-[10px] text-emerald-400/80 font-mono tracking-wider hover:bg-emerald-400/[0.12] disabled:opacity-30 disabled:cursor-not-allowed transition-all"
         >
           SEND
         </button>

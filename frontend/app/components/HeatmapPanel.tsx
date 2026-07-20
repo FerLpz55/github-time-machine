@@ -16,7 +16,7 @@ export default function HeatmapPanel({ repoId }: { repoId: string }) {
     (async () => {
       try {
         setLoading(true);
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://github-time-machine-production.up.railway.app";
         const res = await fetch(`${API_URL}/repositories/${repoId}/heatmap`);
         if (!res.ok) throw new Error("Failed to load heatmap");
         setData(await res.json());

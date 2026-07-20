@@ -14,7 +14,7 @@ export default function RefactorPlanner({ repoId }: { repoId: string }) {
   const runPlanner = async () => {
     setLoading(true); setError(null); setResult(null);
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://github-time-machine-production.up.railway.app";
       const res = await fetch(`${API_URL}/repositories/${repoId}/refactor_plan`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ since_days: sinceDays }),

@@ -19,7 +19,7 @@ export default function TimelinePanel({ repoId }: { repoId: string }) {
   const fetchTimeline = async () => {
     try {
       setLoading(true); setError(null);
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://github-time-machine-production.up.railway.app";
       const res = await fetch(`${API_URL}/repositories/${repoId}/timeline?limit=100`);
       if (!res.ok) throw new Error("Failed to load timeline");
       const json = await res.json();

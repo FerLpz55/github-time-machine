@@ -67,7 +67,7 @@ export default function GraphPanel({ repoId }: { repoId: string }) {
   const fetchGraph = async () => {
     try {
       setLoading(true); setError(null);
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://github-time-machine-production.up.railway.app";
       const res = await fetch(`${API_URL}/repositories/${repoId}/graph?depth=${depth}`);
       if (!res.ok) throw new Error("Failed to load graph");
       const json = await res.json();

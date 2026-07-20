@@ -17,7 +17,7 @@ export default function ImpactPanel({ repoId }: { repoId: string }) {
     if (!target.trim() || loading) return;
     setLoading(true); setError(null); setResult(null);
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://github-time-machine-production.up.railway.app";
       const res = await fetch(`${API_URL}/repositories/${repoId}/impact`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target: target.trim(), change_type: changeType }),

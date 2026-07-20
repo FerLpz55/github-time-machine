@@ -19,7 +19,7 @@ export default function FileHealthBadge({ repoId, path, showLabel }: { repoId: s
     (async () => {
       setLoading(true);
       try {
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://github-time-machine-production.up.railway.app";
         const res = await fetch(`${API_URL}/repositories/${repoId}/file_health?path=${encodeURIComponent(path)}`);
         if (res.ok) setScore(await res.json());
       } catch { /* ignore */ }

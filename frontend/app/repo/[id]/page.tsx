@@ -39,7 +39,7 @@ export default function RepoDashboard({ params }: { params: Promise<{ id: string
   const [newUrl, setNewUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://github-time-machine-production.up.railway.app";
 
   const fetchRepos = useCallback(async () => {
     try {
