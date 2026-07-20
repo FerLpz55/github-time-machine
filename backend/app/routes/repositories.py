@@ -85,6 +85,49 @@ def submit_repository(body: RepositorySubmitRequest, background_tasks: Backgroun
     user_id = _get_demo_user_id()
     owner, name = parse_github_url(body.github_url)
 
+    # Check if repo already exists
+    existing = (
+        supabase.table("repositories")
+        .select("id, github_url, name, owner, created_at")
+        .eq("github_url", body.github_url)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        repo = existing.data[0]
+        # Check latest analysis status
+        analysis = (
+            supabase.table("analyses")
+            .select("status")
+            .eq("repository_id", repo["id"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        status = analysis.data[0]["status"] if analysis.data else "pending"
+        if status == "completed":
+            return RepositoryPending(
+                id=repo["id"],
+                github_url=repo["github_url"],
+                message="Repository already analyzed. Loading existing data...",
+                created_at=datetime.fromisoformat(repo["created_at"]),
+            )
+        elif status in ("pending", "processing"):
+            return RepositoryPending(
+                id=repo["id"],
+                github_url=repo["github_url"],
+                message="Repository is currently being analyzed. Check back soon.",
+                created_at=datetime.fromisoformat(repo["created_at"]),
+            )
+        else:
+            background_tasks.add_task(_run_analysis, repo["id"], body.github_url)
+            return RepositoryPending(
+                id=repo["id"],
+                github_url=repo["github_url"],
+                message="Repository re-queued for analysis.",
+                created_at=datetime.fromisoformat(repo["created_at"]),
+            )
+
     repo_response = (
         supabase.table("repositories")
         .insert({
