@@ -2,7 +2,8 @@ import os
 import time
 from collections import defaultdict
 
-from fastapi import Request, HTTPException
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX", "60"))
 WINDOW_SECONDS = 60
@@ -14,6 +15,8 @@ def rate_limit_middleware():
     """Return an ASGI middleware that limits requests per IP.
 
     Default: 60 requests per 60-second window. Override with RATE_LIMIT_MAX env var.
+    Note: Raising HTTPException inside app.middleware("http") bypasses FastAPI's
+    exception handlers and returns 500 — use JSONResponse directly instead.
     """
 
     async def middleware(request: Request, call_next):
@@ -27,9 +30,9 @@ def rate_limit_middleware():
         _requests[client_ip] = [t for t in _requests[client_ip] if t > window_start]
 
         if len(_requests[client_ip]) >= MAX_REQUESTS:
-            raise HTTPException(
+            return JSONResponse(
                 status_code=429,
-                detail=f"Rate limit exceeded. Max {MAX_REQUESTS} requests per {WINDOW_SECONDS}s.",
+                content={"detail": f"Rate limit exceeded. Max {MAX_REQUESTS} requests per {WINDOW_SECONDS}s."},
             )
 
         _requests[client_ip].append(now)

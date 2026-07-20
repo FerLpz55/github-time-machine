@@ -96,27 +96,29 @@ def submit_repository(body: RepositorySubmitRequest, background_tasks: Backgroun
             })
             .execute()
         )
-    except Exception:
-        # Unique constraint violation — repo already exists
-        try:
-            existing = (
-                supabase.table("repositories")
-                .select("id, github_url, created_at")
-                .eq("github_url", body.github_url)
-                .limit(1)
-                .execute()
-            )
-            if existing.data:
-                repo = existing.data[0]
-                return RepositoryPending(
-                    id=repo["id"],
-                    github_url=repo["github_url"],
-                    message="Repository already indexed.",
-                    created_at=datetime.fromisoformat(repo["created_at"]),
+    except Exception as insert_err:
+        # postgrest.exceptions.APIError with code 23505 = unique constraint violation
+        # Re-fetch the existing record instead of treating all errors as duplicates
+        if hasattr(insert_err, "code") and insert_err.code == "23505":
+            try:
+                existing = (
+                    supabase.table("repositories")
+                    .select("id, github_url, created_at")
+                    .eq("github_url", body.github_url)
+                    .limit(1)
+                    .execute()
                 )
-        except Exception:
-            pass
-        raise HTTPException(status_code=409, detail="Repository already exists or could not be created")
+                if existing.data:
+                    repo = existing.data[0]
+                    return RepositoryPending(
+                        id=repo["id"],
+                        github_url=repo["github_url"],
+                        message="Repository already indexed.",
+                        created_at=datetime.fromisoformat(repo["created_at"]),
+                    )
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"Failed to create repository: {insert_err}")
 
     if not repo_response.data:
         raise HTTPException(status_code=500, detail="Failed to create repository")
@@ -443,7 +445,7 @@ def get_repository_graph(repo_id: UUID,
     else:
         edges = _build_edges_from_content(files_response.data, nodes)
 
-    return GraphResponse(nodes=nodes, edges=edges)
+    return GraphResponse(nodes=nodes, edges=edges, total_nodes=len(nodes), total_edges=len(edges))
 
 
 def _extract_imports(content: str) -> list[str]:

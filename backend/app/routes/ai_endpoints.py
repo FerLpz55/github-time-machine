@@ -8,7 +8,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from openai import OpenAI
-from pydantic import BaseModel
 
 from app.dependencies import get_db
 from app.models.heatmap import DebtScore, HeatmapResponse
@@ -16,6 +15,7 @@ from app.models.health import FileHealthScore
 from app.models.impact import ImpactRequest, ImpactResult, AffectedFile
 from app.models.bug_origin import BugOriginRequest, BugOriginResponse
 from app.models.refactor_plan import RefactorPlanRequest, RefactorPlanResponse
+from app.services.debt_scorer import compute_complexity, compute_churn, compute_debt_score, risk_level
 
 logger = logging.getLogger(__name__)
 
@@ -31,20 +31,6 @@ except Exception as e:
 
 def _openai_configured() -> bool:
     return bool(os.getenv("OPENAI_API_KEY"))
-
-
-# ── Health (diagnostic) ─────────────────────────────────────────────────
-
-@router.get("/ai-health")
-def ai_health(repo_id: UUID, supabase=Depends(get_db)):
-    """Diagnostic endpoint — returns AI subsystem status."""
-    commits_result = supabase.table("commits").select("commit_sha").eq("repository_id", str(repo_id)).limit(1).execute()
-    return {
-        "jinja2_loaded": _jinja is not None,
-        "openai_key_configured": _openai_configured(),
-        "templates_available": os.listdir(_prompts_dir) if os.path.isdir(_prompts_dir) else [],
-        "commits_work": commits_result.data is not None,
-    }
 
 
 # ── Heatmap ─────────────────────────────────────────────────────────────
@@ -66,23 +52,12 @@ def get_heatmap(repo_id: UUID, supabase=Depends(get_db)):
         size = f.get("size") or 0
         language = f.get("language") or "other"
 
-        churn = (size % 20) + 1 if commit_count == 0 else min(20, commit_count)
-
-        complexity = min(100.0, max(0.0, (size / 5000.0) * 60.0))
-
         file_commits = [c for c in (commits.data or []) if path in (c.get("message") or "")]
         fix_commits = [c for c in file_commits if "fix" in (c.get("message") or "").lower()]
 
-        debt_from_churn = min(1.0, len(file_commits) / 15.0)
-        debt_from_fixes = min(1.0, len(fix_commits) / 5.0)
-        debt_score = min(1.0, debt_from_churn * 0.4 + debt_from_fixes * 0.6)
-
-        if debt_score > 0.66:
-            risk = "high"
-        elif debt_score > 0.33:
-            risk = "medium"
-        else:
-            risk = "low"
+        complexity = compute_complexity(size)
+        churn = compute_churn(len(file_commits))
+        debt_score = compute_debt_score(len(fix_commits), len(file_commits))
 
         scores.append(DebtScore(
             path=path,
@@ -92,7 +67,7 @@ def get_heatmap(repo_id: UUID, supabase=Depends(get_db)):
             age_days=0,
             line_count=size,
             debt_score=debt_score,
-            risk_level=risk,
+            risk_level=risk_level(debt_score),
         ))
 
     avg = sum(s.debt_score for s in scores) / len(scores) if scores else 0.0
@@ -128,15 +103,12 @@ def get_file_health(repo_id: UUID, path: str = Query(...), supabase=Depends(get_
     commit_count = len(file_commits)
 
     size = file_rows.data[0].get("size") or 0
-    complexity = min(1.0, max(0.0, (size / 10000.0)))
-
-    churn = min(1.0, commit_count / 20.0)
+    complexity = compute_complexity(size)
+    churn = compute_churn(commit_count)
 
     fix_commits = [c for c in file_commits if "fix" in (c.get("message") or "").lower()]
     fix_count = len(fix_commits)
-    debt_from_ratio = (fix_count / commit_count) if commit_count > 0 else 0.0
-    debt_from_absolute = min(1.0, fix_count / 10.0)
-    debt = min(1.0, debt_from_ratio * 0.4 + debt_from_absolute * 0.6)
+    debt = compute_debt_score(fix_count, commit_count)
 
     avg = (complexity + churn + debt) / 3.0
     if avg > 0.66:
@@ -408,6 +380,7 @@ def get_refactor_plan(repo_id: UUID, body: RefactorPlanRequest, supabase=Depends
             supabase.table("commits")
             .select("commit_sha, author, message, commit_date")
             .eq("repository_id", repo_id_str)
+            .gte("commit_date", cutoff_str)
             .order("commit_date", desc=True)
             .limit(30)
             .execute()

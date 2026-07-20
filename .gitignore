@@ -5,3 +5,5 @@ npm-cache/
 .idea/
 pnpm-lock.yaml
 pnpm-workspace.yaml
+.vercel
+.env*
