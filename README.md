@@ -1,4 +1,22 @@
+<div align="center">
+
 # GitHub Time Machine
+
+### Engineering intelligence dashboard — ask questions about any codebase, travel through commit history, find technical debt and simulate risky changes.
+
+[![Next.js 15](https://img.shields.io/badge/Next.js_15-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
+[![React 19](https://img.shields.io/badge/React_19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
+[![OpenAI](https://img.shields.io/badge/GPT--5.6-412991?style=for-the-badge&logo=openai&logoColor=white)](https://openai.com)
+
+[![Frontend](https://img.shields.io/badge/LIVE_FRONTEND-github--time--machine--taupe.vercel.app-22c55e?style=flat-square)](https://github-time-machine-taupe.vercel.app)
+[![Backend](https://img.shields.io/badge/LIVE_BACKEND-railway.app-78716c?style=flat-square)](https://github-time-machine-production.up.railway.app)
+[![License](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE)
+
+</div>
+
+---
 
 > *"Every codebase has a story. Most teams just can't read it."*
 
