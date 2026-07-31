@@ -4,6 +4,10 @@
 
 We built GitHub Time Machine because we've all been there — staring at a legacy codebase with zero documentation, wondering why that one file has 47 commits by someone who left two years ago. Engineering knowledge gets lost in commit messages, stale wikis, and tribal memory. We wanted to fix that.
 
+---
+
+# ENGLISH VERSION
+
 ## What it does
 
 GitHub Time Machine is an engineering intelligence dashboard. You point it at any public GitHub repo, and it builds a living map of your codebase:
@@ -156,5 +160,164 @@ We built this in 48 hours for the OpenAI Build Week Hackathon.
 | Rachana | Frontend — UI redesign, landing page, theming | @adhikaryrachana00428-hash |
 
 ## License
+
+MIT
+
+---
+
+# VERSIÓN EN ESPAÑOL
+
+## Qué hace
+
+GitHub Time Machine es un dashboard de inteligencia de ingeniería. Le apuntas cualquier repositorio público de GitHub y construye un mapa vivo de tu código:
+
+- **Haz preguntas sobre la arquitectura** — la IA lee los archivos fuente reales, el README y el historial de commits para responder
+- **Ve el grafo de dependencias** — una visualización dirigida por fuerzas que muestra cómo se conectan archivos y módulos
+- **Viaja en el tiempo** — una línea de tiempo de commits que resalta fixes, merges y cambios arquitectónicos
+- **Encuentra la deuda técnica** — un heatmap que rankea cada archivo por complejidad, churn y riesgo
+- **Simula cambios** — "¿Qué pasa si refactorizo este archivo?" con análisis de radio de impacto
+- **Rastrea bugs hasta su origen** — la IA analiza los commits de fix y apunta al culpable probable
+- **Obtén un plan de refactorización** — basado en los patrones reales de commits de tu repo
+
+Todo corre con datos reales. Sin mocks. Sin demos. Envías una URL de GitHub, el pipeline la clona, parsea cada archivo con Tree-sitter, extrae funciones y aristas de imports, indexa commits y lo guarda todo en Supabase.
+
+## Cómo lo construimos
+
+### El stack
+
+| Capa | Tecnología | Por qué |
+|------|-----------|---------|
+| Frontend | Next.js 15, React 19, Tailwind, Canvas | SSR rápido, UI glass-morphism, renderizado del grafo dirigido por fuerzas |
+| Backend | FastAPI | Un solo servicio para repos, análisis, auth e IA — sin complejidad de microservicios |
+| Base de datos | Supabase (PostgreSQL) | Tiempo real, RLS, serverless — perfecto para un hackathon |
+| IA | GPT-5.6 vía OpenAI | Potencia cada funcionalidad inteligente |
+| Deploy | Railway (backend) + Vercel (frontend) | Deploys sin configuración desde git push |
+
+### Cómo usamos Codex + GPT-5.6
+
+**Codex (GitHub Copilot / OpenAI Codex) fue nuestro sexto integrante.** Durante todo el hackathon usamos Codex para:
+
+- **Scaffoldear las rutas de FastAPI** — Copilot generó la estructura inicial de endpoints, validación de parámetros con Pydantic y patrones async. Después refinamos cada ruta para nuestro schema de Supabase.
+- **Escribir la integración con Tree-sitter** — la extracción de símbolos para Python y JavaScript es compleja. Codex manejó las consultas de gramática mientras nosotros orquestábamos el pipeline.
+- **Depurar consultas de base de datos** — cuando fallaban casos borde de Supabase, Copilot sugería los filtros OR y las estrategias de upsert correctas.
+- **Generar el grafo dirigido por fuerzas en Canvas** — la simulación física (repulsión, atracción, gravedad) se programó en par con Codex, iterando sobre coeficientes de amortiguación y calidad del layout.
+- **Manejar casos borde de CORS y auth** — el flujo de OAuth de GitHub con validación de estado, coincidencia de redirect URI e intercambio de sesión con Supabase se construyó junto con sugerencias de Copilot.
+- **Escribir tests y manejo de errores** — cada endpoint tiene respuestas de fallback. Codex ayudó a garantizar que ninguna excepción no manejada rompiera el servicio desplegado.
+
+**GPT-5.6 potencia el producto en sí:**
+
+| Función | Rol de GPT-5.6 |
+|---------|---------------|
+| Architect's Memory (Chat) | Q&A con contexto real del repositorio — archivos, README, commits |
+| Change Intelligence | Analiza aristas de dependencias y calcula radio de impacto con scoring de riesgo |
+| Bug Origin | Lee commits de fix, correlaciona patrones e identifica el SHA culpable |
+| Refactor Planner | Estudia el historial de commits y genera planes accionables paso a paso |
+| Impact Simulation | Combina recorrido del grafo + análisis de IA para escenarios de "¿qué se rompe?" |
+
+La idea clave: no pegamos IA a una herramienta existente. **El producto no puede existir sin GPT-5.6.** Cada panel de análisis que aporta valor real depende de la capacidad del modelo de entender la estructura del código, inferir relaciones desde los mensajes de commit y generar insights de ingeniería que una herramienta de análisis estático jamás podría producir.
+
+### Arquitectura
+
+```
+┌─────────────────────────────────────────┐
+│             Vercel (Frontend)             │
+│  Next.js 15 · glass UI · Canvas graph    │
+│  Landing page · Dashboard · Auth         │
+└──────────────┬──────────────────────────┘
+               │  HTTPS
+┌──────────────▼──────────────────────────┐
+│           Railway (Backend)               │
+│  FastAPI · tree-sitter · GitPython       │
+│  15 endpoints · rate limiting · CORS     │
+└──────────────┬──────────────────────────┘
+               │  PostgreSQL
+┌──────────────▼──────────────────────────┐
+│           Supabase (Database)             │
+│  users · repos · commits · files          │
+│  edges · chat_history · analyses         │
+└──────────────┬──────────────────────────┘
+               │  API
+┌──────────────▼──────────────────────────┐
+│         OpenAI (GPT-5.6 + Codex)          │
+│  chat · impact · bug_origin · refactor   │
+└─────────────────────────────────────────┘
+```
+
+## Cómo empezar
+
+### Requisitos previos
+
+- Node.js 18+, Python 3.10+
+- Clave de API de OpenAI (GPT-5.6)
+- Proyecto de Supabase
+- GitHub OAuth App (para el login)
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Configura SUPABASE_URL, SUPABASE_SERVICE_KEY, OPENAI_API_KEY
+uvicorn app.main:app --reload --port 8000
+```
+
+Después ejecuta `backend/database/complete_schema.sql` en el SQL Editor de Supabase.
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+# Configura NEXT_PUBLIC_API_URL=http://localhost:8000
+npm run dev
+```
+
+### Deploys en vivo
+
+- **Backend**: `https://github-time-machine-production.up.railway.app`
+- **Frontend**: `https://github-time-machine-taupe.vercel.app`
+
+## Endpoints de la API
+
+| Método | Ruta | Propósito |
+|--------|------|-----------|
+| `POST` | `/repositories/` | Enviar un repo para análisis |
+| `GET` | `/repositories/` | Listar repos analizados |
+| `GET` | `/repositories/{id}` | Estado + metadata |
+| `GET` | `/repositories/{id}/graph` | Grafo de dependencias |
+| `GET` | `/repositories/{id}/timeline` | Línea de tiempo de commits |
+| `GET` | `/repositories/{id}/heatmap` | Deuda técnica |
+| `GET` | `/repositories/{id}/file_health` | Salud por archivo |
+| `POST` | `/repositories/{id}/chat` | Chat con IA |
+| `POST` | `/repositories/{id}/impact` | Simulación de cambios |
+| `POST` | `/repositories/{id}/bug_origin` | Rastreador de bugs |
+| `POST` | `/repositories/{id}/refactor_plan` | Planificador de refactoring |
+| `POST` | `/repos/connect` | Sincronización OAuth de GitHub |
+
+## Por qué es una entrega fuerte
+
+- **La IA es el núcleo, no un extra** — quita GPT-5.6 y el producto pierde chat, análisis de impacto, bug origin y planificación de refactoring. Esos cuatro paneles son los que hacen útil al dashboard.
+- **Codex se usó durante todo el desarrollo** — scaffolding, debugging, optimización, casos borde. Codeamos a la par, no en contra.
+- **Es real y funciona** — desplegado en Railway y Vercel. Demo con cualquier repo público de GitHub. Sin humo.
+- **Resuelve un problema genuino** — todo ingeniero ha sufrido codebases sin documentar. Esto te da respuestas, no solo datos.
+- **UX pulida** — tema oscuro glass-morphism, grafo dirigido por fuerzas, animaciones suaves. Se siente como producto, no como prueba de concepto.
+
+## Equipo
+
+Lo construimos en 48 horas para el OpenAI Build Week Hackathon.
+
+| Nombre | Rol | GitHub |
+|--------|-----|--------|
+| Sai Karthik | PM — arquitectura, diseño de prompts de IA, testing, demo | @sai-karthik-dev |
+| Anmol | Frontend — componentes, auth, diseño responsivo | @pvtt-anmol2 |
+| Pranto | Backend — FastAPI, orquestación de IA, Railway | @foysalpranto121 |
+| Fernando | Backend — análisis Git, arquitectura de API, endpoints, Vercel | @FerLpz55 |
+| Vijay | Base de datos — Supabase, schema, RLS, índices | @vjbabu3 |
+| Rachana | Frontend — rediseño de UI, landing page, theming | @adhikaryrachana00428-hash |
+
+## Licencia
 
 MIT
